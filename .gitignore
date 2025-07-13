@@ -1,0 +1,46 @@
+# Rust build artifacts
+/target/
+Cargo.lock
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Debug files
+*.pdb
+
+# Backup files
+*.bak
+*.backup
+*.tmp
+
+# OS specific files
+Thumbs.db
+.Spotlight-V100
+.Trashes
+
+# Private configuration
+.claude/
+private/
+secrets/
+
+# Log files
+*.log
+
+# Testing artifacts
+tarpaulin-report.html
+cobertura.xml
+coverage/
+
+# Build outputs
+/ai
+/invoke_ai_rust
