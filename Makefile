@@ -1,4 +1,4 @@
-# Makefile for invoke_ai_rust
+# Makefile for cmd2ai
 
 # Default installation prefix
 PREFIX ?= $(HOME)/.local

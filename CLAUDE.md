@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Rust CLI tool that interfaces with the OpenRouter API to provide AI-powered command-line assistance with web search capabilities and markdown rendering.
+cmd2ai is a Rust CLI tool that pipes terminal commands to AI models via the OpenRouter API, providing AI-powered command-line assistance with web search capabilities and markdown rendering.
 
 ## Development Commands
 

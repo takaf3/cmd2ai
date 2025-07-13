@@ -1,6 +1,6 @@
-# AI Command-Line Tool (Rust Version)
+# cmd2ai
 
-A Rust implementation of the AI command-line tool that interfaces with the OpenRouter API.
+A fast command-line tool that pipes your terminal commands to AI models via the OpenRouter API.
 
 ## Features
 
@@ -18,9 +18,50 @@ A Rust implementation of the AI command-line tool that interfaces with the OpenR
 
 ## Installation
 
-1. Clone the repository and navigate to the Rust directory:
+### Using Make (Recommended)
+
+1. Clone the repository:
 ```bash
-cd invoke_ai_rust
+git clone https://github.com/takaf3/cmd2ai.git
+cd cmd2ai
+```
+
+2. Build and install:
+```bash
+make install
+```
+
+This will:
+- Build the optimized release binary
+- Install the `ai` command to `~/.local/bin`
+- Install the ZSH widget to `~/.config/zsh/functions`
+
+To install to a custom location:
+```bash
+make install PREFIX=/usr/local
+```
+
+3. Set your OpenRouter API key:
+```bash
+export OPENROUTER_API_KEY="your-api-key-here"
+```
+
+4. For ZSH users, add to your `~/.zshrc`:
+```bash
+source ~/.config/zsh/functions/ai-widget.zsh
+```
+
+To uninstall:
+```bash
+make uninstall
+```
+
+### Manual Installation
+
+1. Clone the repository:
+```bash
+git clone https://github.com/takaf3/cmd2ai.git
+cd cmd2ai
 ```
 
 2. Build the project:
@@ -58,6 +99,10 @@ Disable web search:
 - `AI_WEB_SEARCH_MAX_RESULTS` - Optional. Maximum web search results (default: 5, range: 1-10)
 - `AI_VERBOSE` - Optional. Enable debug logging when set to "true"
 
+## Security Considerations
+
+- **API Key Protection**: The application uses environment variables for API key storage, which is best practice. However, be aware that enabling verbose HTTP logging (not currently implemented) could potentially expose the Authorization header containing your API key.
+
 ## Command-Line Options
 
 - `-s, --search` - Force web search
@@ -81,6 +126,22 @@ This Rust implementation uses:
 - `colored` - Terminal colors
 - `pulldown-cmark` - Markdown parsing
 - `chrono` - Date/time handling
+
+## Development
+
+The project includes a Makefile with several helpful commands:
+
+```bash
+make          # Build release binary (default)
+make install  # Build and install binary and ZSH widget
+make uninstall # Remove installed files
+make clean    # Clean build artifacts
+make dev      # Build debug binary
+make test     # Run tests
+make fmt      # Format code
+make lint     # Run clippy linter
+make check    # Check compilation
+```
 
 ## Performance
 

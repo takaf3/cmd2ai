@@ -43,4 +43,4 @@ coverage/
 
 # Build outputs
 /ai
-/invoke_ai_rust
+/cmd2ai
