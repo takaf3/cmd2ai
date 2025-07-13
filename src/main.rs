@@ -102,6 +102,30 @@ struct Args {
     #[arg(long = "clear", help = "Clear all conversation history")]
     clear_history: bool,
 
+    #[arg(
+        long = "reasoning-effort",
+        help = "Set reasoning effort level (high, medium, low)"
+    )]
+    reasoning_effort: Option<String>,
+
+    #[arg(
+        long = "reasoning-max-tokens",
+        help = "Set maximum tokens for reasoning"
+    )]
+    reasoning_max_tokens: Option<u32>,
+
+    #[arg(
+        long = "reasoning-exclude",
+        help = "Use reasoning but exclude from response"
+    )]
+    reasoning_exclude: bool,
+
+    #[arg(
+        long = "reasoning-enabled",
+        help = "Enable reasoning with default parameters"
+    )]
+    reasoning_enabled: bool,
+
     #[arg(help = "Command to send to AI")]
     command: Vec<String>,
 }
@@ -127,12 +151,26 @@ struct WebPlugin {
 }
 
 #[derive(Serialize)]
+struct Reasoning {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exclude: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    enabled: Option<bool>,
+}
+
+#[derive(Serialize)]
 struct RequestBody {
     model: String,
     messages: Vec<Message>,
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     plugins: Option<Vec<WebPlugin>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning: Option<Reasoning>,
 }
 
 #[derive(Deserialize)]
@@ -154,6 +192,7 @@ struct Annotation {
 struct Delta {
     content: Option<String>,
     annotations: Option<Vec<Annotation>>,
+    reasoning: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -485,19 +524,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if args.command.is_empty() {
         eprintln!("{}", "Usage: ai [OPTIONS] <command>".red());
-        eprintln!("{}", "  -s, --search         Force web search".dimmed());
-        eprintln!("{}", "      --no-search      Disable web search".dimmed());
         eprintln!(
             "{}",
-            "  -n, --new            Start a new conversation".dimmed()
+            "  -s, --search               Force web search".dimmed()
         );
         eprintln!(
             "{}",
-            "  -c, --continue       Continue previous conversation even if expired".dimmed()
+            "      --no-search            Disable web search".dimmed()
         );
         eprintln!(
             "{}",
-            "      --clear          Clear all conversation history".dimmed()
+            "  -n, --new                  Start a new conversation".dimmed()
+        );
+        eprintln!(
+            "{}",
+            "  -c, --continue             Continue previous conversation even if expired".dimmed()
+        );
+        eprintln!(
+            "{}",
+            "      --clear                Clear all conversation history".dimmed()
+        );
+        eprintln!(
+            "{}",
+            "      --reasoning-effort     Set reasoning effort level (high, medium, low)".dimmed()
+        );
+        eprintln!(
+            "{}",
+            "      --reasoning-max-tokens Set maximum tokens for reasoning".dimmed()
+        );
+        eprintln!(
+            "{}",
+            "      --reasoning-exclude    Use reasoning but exclude from response".dimmed()
+        );
+        eprintln!(
+            "{}",
+            "      --reasoning-enabled    Enable reasoning with default parameters".dimmed()
         );
         process::exit(1);
     }
@@ -602,11 +663,87 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
+    // Build reasoning configuration from command-line arguments and environment variables
+    // Command-line arguments take precedence over environment variables
+    let env_reasoning_enabled = env::var("AI_REASONING_ENABLED")
+        .ok()
+        .and_then(|v| match v.to_lowercase().as_str() {
+            "true" | "1" | "yes" => Some(true),
+            _ => None,
+        })
+        .unwrap_or(false);
+
+    let env_reasoning_effort = env::var("AI_REASONING_EFFORT")
+        .ok()
+        .filter(|e| ["high", "medium", "low"].contains(&e.to_lowercase().as_str()))
+        .map(|e| e.to_lowercase());
+
+    let env_reasoning_max_tokens = env::var("AI_REASONING_MAX_TOKENS")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok());
+
+    let env_reasoning_exclude = env::var("AI_REASONING_EXCLUDE")
+        .ok()
+        .and_then(|v| match v.to_lowercase().as_str() {
+            "true" | "1" | "yes" => Some(true),
+            _ => None,
+        })
+        .unwrap_or(false);
+
+    // Determine final values with CLI args taking precedence
+    let final_reasoning_enabled = args.reasoning_enabled || env_reasoning_enabled;
+    let final_reasoning_effort = args.reasoning_effort.clone().or(env_reasoning_effort);
+    let final_reasoning_max_tokens = args.reasoning_max_tokens.or(env_reasoning_max_tokens);
+    let final_reasoning_exclude = args.reasoning_exclude || env_reasoning_exclude;
+
+    let reasoning = if final_reasoning_enabled
+        || final_reasoning_effort.is_some()
+        || final_reasoning_max_tokens.is_some()
+        || final_reasoning_exclude
+    {
+        Some(Reasoning {
+            effort: final_reasoning_effort
+                .clone()
+                .filter(|e| ["high", "medium", "low"].contains(&e.as_str())),
+            max_tokens: final_reasoning_max_tokens,
+            exclude: if final_reasoning_exclude {
+                Some(true)
+            } else {
+                None
+            },
+            enabled: if final_reasoning_enabled {
+                Some(true)
+            } else {
+                None
+            },
+        })
+    } else {
+        None
+    };
+
+    // Log reasoning configuration before moving it
+    if env::var("AI_VERBOSE").unwrap_or_default() == "true" && reasoning.is_some() {
+        eprintln!("{}", "[AI] Reasoning: enabled".dimmed());
+        if let Some(ref effort) = final_reasoning_effort {
+            eprintln!("{}", format!("[AI] Reasoning effort: {}", effort).dimmed());
+        }
+        if let Some(max_tokens) = final_reasoning_max_tokens {
+            eprintln!(
+                "{}",
+                format!("[AI] Reasoning max tokens: {}", max_tokens).dimmed()
+            );
+        }
+        if final_reasoning_exclude {
+            eprintln!("{}", "[AI] Reasoning output: excluded".dimmed());
+        }
+    }
+
     let request_body = RequestBody {
         model: final_model.clone(),
         messages: messages.clone(),
         stream: true,
         plugins,
+        reasoning,
     };
 
     if env::var("AI_VERBOSE").unwrap_or_default() == "true" {
@@ -672,6 +809,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let flush_interval = std::time::Duration::from_millis(50);
     let mut incomplete_line = String::new();
     let mut assistant_response = String::new(); // Accumulate assistant's response
+    let mut reasoning_response = String::new(); // Accumulate reasoning tokens
+    let mut reasoning_buffer = String::new(); // Buffer for displaying reasoning
+    let mut reasoning_displayed = false; // Track if we've displayed reasoning header
+    let mut last_reasoning_ended_with_newline = false; // Track if last reasoning chunk ended with newline
     let timeout_secs = env::var("AI_STREAM_TIMEOUT")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
@@ -748,6 +889,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 match field {
                     "data" => {
                         if value == "[DONE]" {
+                            // Close reasoning section if it was displayed
+                            if reasoning_displayed && !final_reasoning_exclude {
+                                // Check how many trailing newlines we have
+                                let trailing_newlines = reasoning_buffer.chars().rev().take_while(|&c| c == '\n').count();
+                                
+                                // If we have more than one trailing newline, we need to handle the extra space
+                                if trailing_newlines > 1 {
+                                    // Use backspace to remove extra lines
+                                    print!("\x1b[{}A", trailing_newlines - 1);
+                                }
+                                
+                                println!("{}", "└──────────────────────────────────────────────────────────".dimmed());
+                            }
+                            
+
                             // Flush any remaining content
                             let remaining = code_buffer.flush();
                             if !remaining.is_empty() {
@@ -798,8 +954,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 if let Some(choices) = parsed.choices {
                                     for choice in choices {
                                         if let Some(delta) = choice.delta {
+                                            // Process reasoning tokens
+                                            if let Some(reasoning) = delta.reasoning {
+                                                // Accumulate reasoning response
+                                                reasoning_response.push_str(&reasoning);
+                                                reasoning_buffer.push_str(&reasoning);
+
+                                                // Display reasoning if not excluded
+                                                if !final_reasoning_exclude {
+                                                    // Display reasoning header on first chunk
+                                                    if !reasoning_displayed {
+                                                        println!("{}", format!("{}[REASONING]{}", "┌─".dimmed(), "──────────────────────────────────────────────".dimmed()).cyan());
+                                                        reasoning_displayed = true;
+                                                    }
+
+                                                    // Display reasoning content as it comes
+                                                    print!("{}", reasoning);
+                                                    last_reasoning_ended_with_newline = reasoning.ends_with('\n');
+                                                    if last_flush.elapsed() > flush_interval {
+                                                        io::stdout().flush()?;
+                                                        last_flush = std::time::Instant::now();
+                                                    }
+                                                }
+                                            }
+
                                             // Process content
                                             if let Some(content) = delta.content {
+                                                // If we were displaying reasoning, close it first
+                                                if reasoning_displayed && !final_reasoning_exclude {
+                                                    // Only add newline if last reasoning didn't end with one
+                                                    if !last_reasoning_ended_with_newline {
+                                                        println!();
+                                                    }
+                                                    println!("{}", "└──────────────────────────────────────────────────────────".dimmed());
+                                                    reasoning_displayed = false;
+                                                }
+
                                                 // Accumulate response for session
                                                 assistant_response.push_str(&content);
 
@@ -880,6 +1070,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Handle case where stream ends without [DONE]
+
+    // Close reasoning section if it was displayed
+    if reasoning_displayed && !final_reasoning_exclude {
+        // Just print the closing bar
+        println!("{}", "└──────────────────────────────────────────────────────────".dimmed());
+    }
+
     let remaining = code_buffer.flush();
     if !remaining.is_empty() {
         print!("{}", remaining.trim_end());

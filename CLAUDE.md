@@ -50,12 +50,13 @@ cargo check
 ## Architecture & Key Components
 
 ### Core Application Structure
-The entire application logic is contained in `src/main.rs` (455 lines), implementing:
+The entire application logic is contained in `src/main.rs` (~1000 lines), implementing:
 
 1. **Command-line Interface** - Using clap with structured CLI arguments
 2. **Streaming Response Handler** - Server-Sent Events (SSE) processing with custom code buffer
 3. **Web Search Intelligence** - Automatic detection based on keywords with manual override flags
 4. **Syntax Highlighting** - Real-time syntax highlighting for code blocks using syntect library
+5. **Reasoning Token Support** - Display AI model's step-by-step reasoning process
 
 ### Key Implementation Details
 
@@ -69,6 +70,13 @@ The entire application logic is contained in `src/main.rs` (455 lines), implemen
 
 **API Integration**: Uses OpenRouter API with automatic model suffix handling (appends ":online" for web search). The streaming response parser handles SSE format with proper error recovery.
 
+**Reasoning Token Support**: The `Reasoning` struct provides configuration for AI reasoning tokens:
+- `effort`: Controls reasoning depth (high/medium/low)
+- `max_tokens`: Sets specific token limit for reasoning
+- `exclude`: Allows using reasoning internally without displaying it
+- `enabled`: Enables reasoning with default parameters
+Reasoning tokens are displayed in a distinct formatted block during streaming.
+
 ### Environment Configuration
 Required:
 - `OPENROUTER_API_KEY` - API authentication
@@ -79,6 +87,12 @@ Optional:
 - `AI_WEB_SEARCH_MAX_RESULTS` - Range: 1-10, default: 5
 - `AI_VERBOSE` - Set to "true" for debug logging
 - `AI_STREAM_TIMEOUT` - Timeout in seconds for streaming responses, default: 30
+- `AI_REASONING_ENABLED` - Enable reasoning tokens ("true", "1", or "yes")
+- `AI_REASONING_EFFORT` - Set reasoning effort level ("high", "medium", or "low")
+- `AI_REASONING_MAX_TOKENS` - Maximum tokens for reasoning (numeric value)
+- `AI_REASONING_EXCLUDE` - Use reasoning but exclude from output ("true", "1", or "yes")
+
+Command-line arguments always take precedence over environment variables.
 
 ### Wrapper Scripts
 - `ai` - Bash wrapper that auto-builds if binary is missing

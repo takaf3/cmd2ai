@@ -11,6 +11,7 @@ A fast command-line tool that pipes your terminal commands to AI models via the 
 - ✅ Manual web search control with flags
 - ✅ Support for custom models and system prompts
 - ✅ Clean citation display for web search results
+- ✅ Reasoning token support for enhanced AI model decision making
 
 ## Prerequisites
 
@@ -121,6 +122,55 @@ Disable web search:
 ./ai --no-search "What is 2+2?"
 ```
 
+### Reasoning Tokens
+
+For models that support it, you can enable reasoning tokens to see the AI's step-by-step thinking process:
+
+Enable reasoning with default parameters:
+```bash
+./ai --reasoning-enabled "How would you build the world's tallest skyscraper?"
+```
+
+Set specific reasoning effort level:
+```bash
+./ai --reasoning-effort high "Explain quantum computing in detail"
+```
+
+Set maximum tokens for reasoning:
+```bash
+./ai --reasoning-max-tokens 2000 "What's the most efficient sorting algorithm?"
+```
+
+Use reasoning internally but exclude from output:
+```bash
+./ai --reasoning-effort medium --reasoning-exclude "Solve this complex problem"
+```
+
+Combine multiple reasoning options:
+```bash
+./ai --reasoning-effort high --reasoning-max-tokens 3000 "Design a distributed system"
+```
+
+#### Using Environment Variables
+
+For convenience, especially with the ZSH widget, you can set reasoning options via environment variables:
+
+```bash
+# Enable reasoning by default
+export AI_REASONING_ENABLED=true
+
+# Set default reasoning effort level
+export AI_REASONING_EFFORT=high
+
+# Set default max tokens for reasoning
+export AI_REASONING_MAX_TOKENS=2000
+
+# Exclude reasoning output by default
+export AI_REASONING_EXCLUDE=true
+```
+
+Command-line arguments always take precedence over environment variables, allowing you to override defaults on a per-command basis.
+
 ## Environment Variables
 
 - `OPENROUTER_API_KEY` - Required. Your OpenRouter API key
@@ -129,6 +179,10 @@ Disable web search:
 - `AI_WEB_SEARCH_MAX_RESULTS` - Optional. Maximum web search results (default: 5, range: 1-10)
 - `AI_STREAM_TIMEOUT` - Optional. Timeout in seconds for streaming responses (default: 30)
 - `AI_VERBOSE` - Optional. Enable debug logging when set to "true"
+- `AI_REASONING_ENABLED` - Optional. Enable reasoning tokens ("true", "1", or "yes")
+- `AI_REASONING_EFFORT` - Optional. Set reasoning effort level ("high", "medium", or "low")
+- `AI_REASONING_MAX_TOKENS` - Optional. Maximum tokens for reasoning (numeric value)
+- `AI_REASONING_EXCLUDE` - Optional. Use reasoning but exclude from output ("true", "1", or "yes")
 
 ## Security Considerations
 
@@ -141,6 +195,10 @@ Disable web search:
 - `-n, --new` - Start a new conversation
 - `-c, --continue` - Continue previous conversation even if expired
 - `--clear` - Clear all conversation history
+- `--reasoning-effort` - Set reasoning effort level (high, medium, low)
+- `--reasoning-max-tokens` - Set maximum tokens for reasoning
+- `--reasoning-exclude` - Use reasoning but exclude from response
+- `--reasoning-enabled` - Enable reasoning with default parameters
 - `-h, --help` - Print help information
 
 ## Web Search Detection
