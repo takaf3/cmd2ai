@@ -7,6 +7,10 @@ edition = "2021"
 name = "ai"
 path = "src/main.rs"
 
+[[bin]]
+name = "check-raw"
+path = "src/bin/check_raw.rs"
+
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 tokio = { version = "1.42", features = ["full"] }
