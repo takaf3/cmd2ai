@@ -186,10 +186,3 @@ make fmt      # Format code
 make lint     # Run clippy linter
 make check    # Check compilation
 ```
-
-## Performance
-
-The Rust version offers improved performance compared to the TypeScript version:
-- Faster startup time (no Node.js/tsx overhead)
-- Lower memory usage
-- Native binary execution
