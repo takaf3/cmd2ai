@@ -4,13 +4,16 @@ use futures::StreamExt;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use std::env;
+use std::fs;
 use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 use std::process;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style, ThemeSet};
 use syntect::parsing::SyntaxSet;
 use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
 use tokio::time::{timeout, Duration};
+use uuid::Uuid;
 
 const WEB_SEARCH_KEYWORDS: &[&str] = &[
     "latest",
@@ -73,6 +76,9 @@ const NO_SEARCH_KEYWORDS: &[&str] = &[
     "build",
 ];
 
+const SESSION_EXPIRY_MINUTES: i64 = 30;
+const MAX_CONVERSATION_PAIRS: usize = 3; // Keep last 3 exchanges (6 messages)
+
 #[derive(Parser, Debug)]
 #[command(name = "ai")]
 #[command(about = "AI command-line tool using OpenRouter API", long_about = None)]
@@ -80,17 +86,37 @@ struct Args {
     #[arg(short = 's', long = "search", help = "Force web search")]
     force_search: bool,
 
-    #[arg(short = 'n', long = "no-search", help = "Disable web search")]
+    #[arg(long = "no-search", help = "Disable web search")]
     no_search: bool,
+
+    #[arg(short = 'n', long = "new", help = "Start a new conversation")]
+    new_conversation: bool,
+
+    #[arg(
+        short = 'c',
+        long = "continue",
+        help = "Continue previous conversation even if expired"
+    )]
+    force_continue: bool,
+
+    #[arg(long = "clear", help = "Clear all conversation history")]
+    clear_history: bool,
 
     #[arg(help = "Command to send to AI")]
     command: Vec<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct Message {
     role: String,
     content: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct Session {
+    session_id: String,
+    last_updated: chrono::DateTime<chrono::Local>,
+    messages: Vec<Message>,
 }
 
 #[derive(Serialize)]
@@ -291,6 +317,113 @@ impl CodeBuffer {
     }
 }
 
+fn get_cache_dir() -> PathBuf {
+    let home = env::var("HOME").expect("HOME environment variable not set");
+    let cache_dir = Path::new(&home).join(".cache").join("cmd2ai");
+    if !cache_dir.exists() {
+        fs::create_dir_all(&cache_dir).expect("Failed to create cache directory");
+    }
+    cache_dir
+}
+
+fn find_recent_session() -> Option<Session> {
+    let cache_dir = get_cache_dir();
+    let now = chrono::Local::now();
+
+    // Read all session files and find the most recent valid one
+    if let Ok(entries) = fs::read_dir(&cache_dir) {
+        let mut sessions: Vec<(PathBuf, Session)> = entries
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| {
+                let path = entry.path();
+                if path.extension()? == "json"
+                    && path.file_name()?.to_str()?.starts_with("session-")
+                {
+                    let content = fs::read_to_string(&path).ok()?;
+                    let session: Session = serde_json::from_str(&content).ok()?;
+                    Some((path, session))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Sort by last_updated (most recent first)
+        sessions.sort_by(|a, b| b.1.last_updated.cmp(&a.1.last_updated));
+
+        // Return the most recent session if it's not expired
+        if let Some((path, session)) = sessions.first() {
+            let age_minutes = (now - session.last_updated).num_minutes();
+            if age_minutes < SESSION_EXPIRY_MINUTES {
+                return Some(session.clone());
+            } else {
+                // Clean up expired session
+                let _ = fs::remove_file(path);
+            }
+        }
+    }
+
+    None
+}
+
+fn save_session(session: &Session) -> Result<(), Box<dyn std::error::Error>> {
+    let cache_dir = get_cache_dir();
+    let session_file = cache_dir.join(format!("session-{}.json", session.session_id));
+    let content = serde_json::to_string_pretty(session)?;
+    fs::write(session_file, content)?;
+    Ok(())
+}
+
+fn clear_all_sessions() -> Result<(), Box<dyn std::error::Error>> {
+    let cache_dir = get_cache_dir();
+    if let Ok(entries) = fs::read_dir(&cache_dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.extension() == Some(std::ffi::OsStr::new("json"))
+                && path
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .starts_with("session-")
+            {
+                fs::remove_file(path)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn trim_conversation_history(messages: &mut Vec<Message>) {
+    // Keep system message (if exists) + last N conversation pairs
+    let mut system_messages: Vec<Message> = messages
+        .iter()
+        .filter(|m| m.role == "system")
+        .cloned()
+        .collect();
+
+    let conversation_messages: Vec<Message> = messages
+        .iter()
+        .filter(|m| m.role != "system")
+        .cloned()
+        .collect();
+
+    // Keep only the last MAX_CONVERSATION_PAIRS exchanges
+    let keep_count = MAX_CONVERSATION_PAIRS * 2; // Each pair has user + assistant
+    let trimmed: Vec<Message> = conversation_messages
+        .into_iter()
+        .rev()
+        .take(keep_count)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+
+    messages.clear();
+    messages.append(&mut system_messages);
+    messages.extend(trimmed);
+}
+
 fn should_use_web_search(command: &str, force_search: bool, no_search: bool) -> bool {
     if force_search {
         return true;
@@ -336,13 +469,36 @@ fn should_use_web_search(command: &str, force_search: bool, no_search: bool) -> 
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
+    // Handle --clear option
+    if args.clear_history {
+        match clear_all_sessions() {
+            Ok(_) => {
+                println!("{}", "All conversation history cleared.".green());
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("{}", format!("Error clearing history: {}", e).red());
+                process::exit(1);
+            }
+        }
+    }
+
     if args.command.is_empty() {
+        eprintln!("{}", "Usage: ai [OPTIONS] <command>".red());
+        eprintln!("{}", "  -s, --search         Force web search".dimmed());
+        eprintln!("{}", "      --no-search      Disable web search".dimmed());
         eprintln!(
             "{}",
-            "Usage: ai [--search|-s] [--no-search|-n] <command>".red()
+            "  -n, --new            Start a new conversation".dimmed()
         );
-        eprintln!("{}", "  --search, -s     Force web search".dimmed());
-        eprintln!("{}", "  --no-search, -n  Disable web search".dimmed());
+        eprintln!(
+            "{}",
+            "  -c, --continue       Continue previous conversation even if expired".dimmed()
+        );
+        eprintln!(
+            "{}",
+            "      --clear          Clear all conversation history".dimmed()
+        );
         process::exit(1);
     }
 
@@ -369,27 +525,62 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let system_prompt = env::var("AI_SYSTEM_PROMPT").ok();
-
     let current_date = chrono::Local::now().format("%A, %B %d, %Y").to_string();
 
-    let mut messages = vec![];
-
-    let date_prompt = format!("Today's date is {}.", current_date);
-    let system_content = if let Some(prompt) = system_prompt {
-        format!("{}\n\n{}", date_prompt, prompt)
+    // Load or create session
+    let mut session = if args.new_conversation {
+        // Create new session
+        Session {
+            session_id: Uuid::new_v4().to_string(),
+            last_updated: chrono::Local::now(),
+            messages: vec![],
+        }
     } else {
-        date_prompt
+        // Try to find existing session
+        let existing_session = find_recent_session();
+
+        if args.force_continue && existing_session.is_some() {
+            // Force continue even if expired
+            existing_session.unwrap()
+        } else {
+            // Use existing if found and not expired, otherwise create new
+            existing_session.unwrap_or_else(|| Session {
+                session_id: Uuid::new_v4().to_string(),
+                last_updated: chrono::Local::now(),
+                messages: vec![],
+            })
+        }
     };
 
-    messages.push(Message {
-        role: "system".to_string(),
-        content: system_content,
-    });
+    // Build messages array
+    let mut messages = session.messages.clone();
 
+    // Add system message if this is a new conversation or no system message exists
+    if messages.is_empty() || messages.first().map(|m| &m.role) != Some(&"system".to_string()) {
+        let date_prompt = format!("Today's date is {}.", current_date);
+        let system_content = if let Some(prompt) = system_prompt {
+            format!("{}\n\n{}", date_prompt, prompt)
+        } else {
+            date_prompt
+        };
+
+        messages.insert(
+            0,
+            Message {
+                role: "system".to_string(),
+                content: system_content,
+            },
+        );
+    }
+
+    // Add user message
     messages.push(Message {
         role: "user".to_string(),
-        content: command,
+        content: command.clone(),
     });
+
+    // Trim history if needed
+    trim_conversation_history(&mut messages);
 
     let plugins = if use_web_search {
         let max_results = env::var("AI_WEB_SEARCH_MAX_RESULTS")
@@ -413,7 +604,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let request_body = RequestBody {
         model: final_model.clone(),
-        messages,
+        messages: messages.clone(),
         stream: true,
         plugins,
     };
@@ -480,6 +671,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut last_flush = std::time::Instant::now();
     let flush_interval = std::time::Duration::from_millis(50);
     let mut incomplete_line = String::new();
+    let mut assistant_response = String::new(); // Accumulate assistant's response
     let timeout_secs = env::var("AI_STREAM_TIMEOUT")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
@@ -576,6 +768,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                             println!();
                             io::stdout().flush()?;
+
+                            // Save session before returning
+                            if !assistant_response.is_empty() {
+                                session.messages = messages;
+                                session.messages.push(Message {
+                                    role: "assistant".to_string(),
+                                    content: assistant_response,
+                                });
+                                session.last_updated = chrono::Local::now();
+
+                                if let Err(e) = save_session(&session) {
+                                    if env::var("AI_VERBOSE").unwrap_or_default() == "true" {
+                                        eprintln!(
+                                            "{}",
+                                            format!("[AI] Warning: Failed to save session: {}", e)
+                                                .dimmed()
+                                        );
+                                    }
+                                }
+                            }
+
                             return Ok(());
                         }
 
@@ -587,6 +800,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         if let Some(delta) = choice.delta {
                                             // Process content
                                             if let Some(content) = delta.content {
+                                                // Accumulate response for session
+                                                assistant_response.push_str(&content);
+
                                                 let formatted = code_buffer.append(&content);
                                                 if !formatted.is_empty() {
                                                     print!("{}", formatted);
@@ -679,6 +895,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!();
     io::stdout().flush()?;
+
+    // Save session with assistant's response
+    if !assistant_response.is_empty() {
+        session.messages = messages;
+        session.messages.push(Message {
+            role: "assistant".to_string(),
+            content: assistant_response,
+        });
+        session.last_updated = chrono::Local::now();
+
+        if let Err(e) = save_session(&session) {
+            if env::var("AI_VERBOSE").unwrap_or_default() == "true" {
+                eprintln!(
+                    "{}",
+                    format!("[AI] Warning: Failed to save session: {}", e).dimmed()
+                );
+            }
+        }
+    }
 
     Ok(())
 }
