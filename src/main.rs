@@ -1,12 +1,16 @@
 use clap::Parser;
 use colored::*;
 use futures::StreamExt;
-use pulldown_cmark::{Event, Options, Parser as MarkdownParser, Tag, TagEnd};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::io::{self, Write};
 use std::process;
+use syntect::easy::HighlightLines;
+use syntect::highlighting::{Style, ThemeSet};
+use syntect::parsing::SyntaxSet;
+use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
+use tokio::time::{timeout, Duration};
 
 const WEB_SEARCH_KEYWORDS: &[&str] = &[
     "latest",
@@ -136,158 +140,155 @@ struct StreamResponse {
     choices: Option<Vec<Choice>>,
 }
 
-struct MarkdownBuffer {
+struct CodeBuffer {
     buffer: String,
     in_code_block: bool,
+    code_block_content: String,
+    code_block_lang: Option<String>,
+    syntax_set: SyntaxSet,
+    theme_set: ThemeSet,
 }
 
-impl MarkdownBuffer {
+impl CodeBuffer {
     fn new() -> Self {
         Self {
             buffer: String::new(),
             in_code_block: false,
+            code_block_content: String::new(),
+            code_block_lang: None,
+            syntax_set: SyntaxSet::load_defaults_newlines(),
+            theme_set: ThemeSet::load_defaults(),
         }
+    }
+
+    fn highlight_code(&self, code: &str, lang: Option<&str>) -> String {
+        let theme = &self.theme_set.themes["Solarized (dark)"];
+
+        let syntax = if let Some(lang) = lang {
+            self.syntax_set
+                .find_syntax_by_token(lang)
+                .or_else(|| self.syntax_set.find_syntax_by_extension(lang))
+                .unwrap_or_else(|| self.syntax_set.find_syntax_plain_text())
+        } else {
+            self.syntax_set.find_syntax_plain_text()
+        };
+
+        let mut highlighter = HighlightLines::new(syntax, theme);
+        let mut output = String::new();
+
+        for line in LinesWithEndings::from(code) {
+            let ranges: Vec<(Style, &str)> =
+                highlighter.highlight_line(line, &self.syntax_set).unwrap();
+            let escaped = as_24_bit_terminal_escaped(&ranges[..], false);
+            output.push_str(&escaped);
+        }
+
+        output
     }
 
     fn append(&mut self, content: &str) -> String {
         self.buffer.push_str(content);
-
         let mut output = String::new();
-        let mut last_processed_index = 0;
 
-        let chars: Vec<char> = self.buffer.chars().collect();
-        let mut i = 0;
+        while !self.buffer.is_empty() {
+            if !self.in_code_block {
+                // Look for code block start
+                if let Some(code_start) = self.buffer.find("```") {
+                    // Output everything before the code block
+                    output.push_str(&self.buffer[..code_start]);
 
-        while i < chars.len() {
-            if i + 2 < chars.len() && &chars[i..i + 3] == &['`', '`', '`'] {
-                if !self.in_code_block {
-                    if i + 3 < chars.len() {
-                        let remaining: String = chars[i + 3..].iter().collect();
-                        if remaining.contains('\n') {
-                            self.in_code_block = true;
-                            if i > last_processed_index {
-                                let to_process: String =
-                                    chars[last_processed_index..i].iter().collect();
-                                output.push_str(&render_markdown(&to_process));
-                            }
-                            last_processed_index = i;
-                        }
+                    // Extract the code block marker and language
+                    self.buffer = self.buffer[code_start + 3..].to_string();
+
+                    // Check if we have a complete first line with language
+                    if let Some(newline_pos) = self.buffer.find('\n') {
+                        let lang_line = self.buffer[..newline_pos].trim();
+                        self.code_block_lang = if lang_line.is_empty() {
+                            None
+                        } else {
+                            Some(lang_line.to_string())
+                        };
+
+                        self.buffer = self.buffer[newline_pos + 1..].to_string();
+                        self.in_code_block = true;
+                        self.code_block_content.clear();
+
+                        // Output code block header
+                        output.push_str(&format!(
+                            "{}[{}]{}\n",
+                            "┌─".dimmed(),
+                            self.code_block_lang.as_deref().unwrap_or("code").cyan(),
+                            "─────────────────────────────────────────────────".dimmed()
+                        ));
+                    } else {
+                        // Incomplete first line, wait for more content
+                        self.buffer = format!("```{}", self.buffer);
+                        break;
                     }
-                } else if i + 3 < chars.len() && chars[i + 3] == '\n' {
+                } else {
+                    // No code block found, output everything and clear buffer
+                    output.push_str(&self.buffer);
+                    self.buffer.clear();
+                }
+            } else {
+                // In code block, look for end marker
+                if let Some(code_end) = self.buffer.find("```") {
+                    // Add content before the end marker to code block
+                    self.code_block_content.push_str(&self.buffer[..code_end]);
+
+                    // Highlight and output the code
+                    let highlighted = self
+                        .highlight_code(&self.code_block_content, self.code_block_lang.as_deref());
+                    output.push_str(&highlighted);
+
+                    // Output code block footer
+                    output.push_str(&format!(
+                        "{}\n",
+                        "└──────────────────────────────────────────────────────────".dimmed()
+                    ));
+
+                    // Reset state
+                    self.buffer = self.buffer[code_end + 3..].to_string();
                     self.in_code_block = false;
-                    let code_content: String =
-                        chars[last_processed_index..i + 4].iter().collect();
-                    output.push_str(&render_markdown(&code_content));
-                    last_processed_index = i + 4;
-                    i += 3;
+                    self.code_block_content.clear();
+                    self.code_block_lang = None;
+                } else {
+                    // Still in code block, accumulate content
+                    self.code_block_content.push_str(&self.buffer);
+                    self.buffer.clear();
+                    break;
                 }
             }
-            i += 1;
-        }
-
-        if !self.in_code_block {
-            let unprocessed: String = chars[last_processed_index..].iter().collect();
-            let lines: Vec<&str> = unprocessed.split('\n').collect();
-
-            for i in 0..lines.len() - 1 {
-                output.push_str(&render_markdown(&format!("{}\n", lines[i])));
-            }
-
-            self.buffer = lines[lines.len() - 1].to_string();
-        } else {
-            self.buffer = chars[last_processed_index..].iter().collect();
         }
 
         output
     }
 
     fn flush(&mut self) -> String {
-        if !self.buffer.is_empty() {
-            let output = render_markdown(&self.buffer);
-            self.buffer.clear();
-            output
-        } else {
-            String::new()
+        let mut output = String::new();
+
+        if self.in_code_block {
+            // Unterminated code block
+            if !self.code_block_content.is_empty() {
+                let highlighted =
+                    self.highlight_code(&self.code_block_content, self.code_block_lang.as_deref());
+                output.push_str(&highlighted);
+                output.push_str(&format!(
+                    "{}\n",
+                    "└──────────────────────────────────────────────────────────".dimmed()
+                ));
+            }
+        } else if !self.buffer.is_empty() {
+            output.push_str(&self.buffer);
         }
+
+        self.buffer.clear();
+        self.code_block_content.clear();
+        self.in_code_block = false;
+        self.code_block_lang = None;
+
+        output
     }
-}
-
-fn render_markdown(text: &str) -> String {
-    let mut options = Options::empty();
-    options.insert(Options::ENABLE_STRIKETHROUGH);
-
-    let parser = MarkdownParser::new_ext(text, options);
-    let mut output = String::new();
-    let mut in_code_block = false;
-    let mut in_heading = false;
-    let mut heading_level = 0;
-    let mut in_link = false;
-    let mut link_url = String::new();
-
-    for event in parser {
-        match event {
-            Event::Start(tag) => match tag {
-                Tag::Heading { level, .. } => {
-                    in_heading = true;
-                    heading_level = level as u8;
-                }
-                Tag::CodeBlock(_) => {
-                    in_code_block = true;
-                    output.push_str(&format!("{}", "```".yellow()));
-                }
-                Tag::Link { dest_url, .. } => {
-                    in_link = true;
-                    link_url = dest_url.to_string();
-                }
-                Tag::Emphasis => output.push_str(&format!("{}", "".italic())),
-                Tag::Strong => output.push_str(&format!("{}", "".bold())),
-                Tag::Strikethrough => output.push_str(&format!("{}", "".strikethrough())),
-                Tag::BlockQuote(_) => output.push_str(&format!("{}", "> ".dimmed())),
-                _ => {}
-            },
-            Event::End(tag) => match tag {
-                TagEnd::Heading(_) => {
-                    in_heading = false;
-                }
-                TagEnd::CodeBlock => {
-                    in_code_block = false;
-                    output.push_str(&format!("{}\n", "```".yellow()));
-                }
-                TagEnd::Link => {
-                    if !link_url.is_empty() {
-                        output.push_str(&format!(" ({})", link_url.blue().underline()));
-                    }
-                    in_link = false;
-                    link_url.clear();
-                }
-                _ => {}
-            },
-            Event::Text(text) => {
-                if in_code_block {
-                    output.push_str(&format!("{}", text.yellow()));
-                } else if in_heading {
-                    let colored_text = match heading_level {
-                        1 => text.magenta().underline().bold().to_string(),
-                        _ => text.green().bold().to_string(),
-                    };
-                    output.push_str(&colored_text);
-                } else if in_link {
-                    output.push_str(&text.blue().underline().to_string());
-                } else {
-                    output.push_str(&text);
-                }
-            }
-            Event::Code(code) => {
-                output.push_str(&format!("{}", code.yellow()));
-            }
-            Event::SoftBreak | Event::HardBreak => {
-                output.push('\n');
-            }
-            _ => {}
-        }
-    }
-
-    output
 }
 
 fn should_use_web_search(command: &str, force_search: bool, no_search: bool) -> bool {
@@ -303,13 +304,11 @@ fn should_use_web_search(command: &str, force_search: bool, no_search: bool) -> 
     if NO_SEARCH_KEYWORDS
         .iter()
         .any(|&keyword| lower_command.contains(keyword))
-    {
-        if !WEB_SEARCH_KEYWORDS
+        && !WEB_SEARCH_KEYWORDS
             .iter()
             .any(|&keyword| lower_command.contains(keyword))
-        {
-            return false;
-        }
+    {
+        return false;
     }
 
     if WEB_SEARCH_KEYWORDS
@@ -477,69 +476,209 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
     let mut citations: Vec<Citation> = vec![];
-    let mut markdown_buffer = MarkdownBuffer::new();
+    let mut code_buffer = CodeBuffer::new();
+    let mut last_flush = std::time::Instant::now();
+    let flush_interval = std::time::Duration::from_millis(50);
+    let mut incomplete_line = String::new();
+    let timeout_secs = env::var("AI_STREAM_TIMEOUT")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(30);
+    let chunk_timeout = Duration::from_secs(timeout_secs);
 
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk?;
-        let text = String::from_utf8_lossy(&chunk);
-        buffer.push_str(&text);
+    loop {
+        match timeout(chunk_timeout, stream.next()).await {
+            Ok(Some(chunk)) => {
+                let chunk = chunk?;
+                let text = String::from_utf8_lossy(&chunk);
 
-        while let Some(line_end) = buffer.find('\n') {
-            let line = buffer[..line_end].trim().to_string();
-            buffer = buffer[line_end + 1..].to_string();
+                // Append new data to incomplete line from previous chunk
+                incomplete_line.push_str(&text);
+            }
+            Ok(None) => {
+                // Stream ended normally
+                break;
+            }
+            Err(_) => {
+                // Timeout occurred
+                eprintln!(
+                    "{}",
+                    format!(
+                        "Error: Connection timeout - no data received for {} seconds",
+                        timeout_secs
+                    )
+                    .red()
+                );
+                eprintln!(
+                    "{}",
+                    "The AI service may be experiencing issues or the connection was lost."
+                        .dimmed()
+                );
 
-            if line.starts_with("data: ") {
-                let data = &line[6..];
-                if data == "[DONE]" {
-                    let remaining = markdown_buffer.flush();
-                    if !remaining.is_empty() {
-                        print!("{}", remaining.trim_end());
-                    }
-
-                    if !citations.is_empty() {
-                        println!("{}", "\n\n---\nSources:".dimmed());
-                        for (index, citation) in citations.iter().enumerate() {
-                            println!("{}", format!("[{}] {}", index + 1, citation.title).cyan());
-                            println!("{}", format!("    {}", citation.url).dimmed());
-                        }
-                    }
-
+                // Flush any buffered content before exiting
+                let remaining = code_buffer.flush();
+                if !remaining.is_empty() {
+                    print!("{}", remaining.trim_end());
                     println!();
-                    io::stdout().flush()?;
-                    return Ok(());
                 }
 
-                if let Ok(parsed) = serde_json::from_str::<StreamResponse>(data) {
-                    if let Some(choices) = parsed.choices {
-                        for choice in choices {
-                            if let Some(delta) = choice.delta {
-                                if let Some(content) = delta.content {
-                                    let formatted = markdown_buffer.append(&content);
-                                    if !formatted.is_empty() {
-                                        print!("{}", formatted);
-                                        io::stdout().flush()?;
-                                    }
-                                }
+                io::stdout().flush()?;
+                process::exit(1);
+            }
+        }
 
-                                if let Some(annotations) = delta.annotations {
-                                    for annotation in annotations {
-                                        if annotation.annotation_type == "url_citation" {
-                                            if let Some(citation) = annotation.url_citation {
-                                                if !citations.iter().any(|c| c.url == citation.url)
-                                                {
-                                                    citations.push(citation);
+        // Find last newline to ensure we only process complete lines
+        if let Some(last_newline_pos) = incomplete_line.rfind('\n') {
+            // Add complete lines to buffer
+            buffer.push_str(&incomplete_line[..=last_newline_pos]);
+            // Keep incomplete part for next iteration
+            incomplete_line = incomplete_line[last_newline_pos + 1..].to_string();
+        } else {
+            // No complete line yet, continue accumulating
+            continue;
+        }
+
+        // Process complete lines
+        while let Some(line_end) = buffer.find('\n') {
+            let line = buffer[..line_end].to_string();
+            buffer = buffer[line_end + 1..].to_string();
+
+            // Handle SSE format - skip empty lines and comments
+            if line.is_empty() || line.starts_with(':') {
+                continue;
+            }
+
+            // Parse SSE field
+            if let Some(colon_pos) = line.find(':') {
+                let field = line[..colon_pos].trim();
+                let value = line[colon_pos + 1..].trim_start();
+
+                match field {
+                    "data" => {
+                        if value == "[DONE]" {
+                            // Flush any remaining content
+                            let remaining = code_buffer.flush();
+                            if !remaining.is_empty() {
+                                print!("{}", remaining.trim_end());
+                            }
+
+                            // Display citations if any
+                            if !citations.is_empty() {
+                                println!("{}", "\n\n---\nSources:".dimmed());
+                                for (index, citation) in citations.iter().enumerate() {
+                                    println!(
+                                        "{}",
+                                        format!("[{}] {}", index + 1, citation.title).cyan()
+                                    );
+                                    println!("{}", format!("    {}", citation.url).dimmed());
+                                }
+                            }
+
+                            println!();
+                            io::stdout().flush()?;
+                            return Ok(());
+                        }
+
+                        // Parse JSON data with better error handling
+                        match serde_json::from_str::<StreamResponse>(value) {
+                            Ok(parsed) => {
+                                if let Some(choices) = parsed.choices {
+                                    for choice in choices {
+                                        if let Some(delta) = choice.delta {
+                                            // Process content
+                                            if let Some(content) = delta.content {
+                                                let formatted = code_buffer.append(&content);
+                                                if !formatted.is_empty() {
+                                                    print!("{}", formatted);
+
+                                                    // Batch flushes for better performance
+                                                    if last_flush.elapsed() > flush_interval {
+                                                        io::stdout().flush()?;
+                                                        last_flush = std::time::Instant::now();
+                                                    }
+                                                }
+                                            }
+
+                                            // Process annotations
+                                            if let Some(annotations) = delta.annotations {
+                                                for annotation in annotations {
+                                                    if annotation.annotation_type == "url_citation"
+                                                    {
+                                                        if let Some(citation) =
+                                                            annotation.url_citation
+                                                        {
+                                                            if !citations
+                                                                .iter()
+                                                                .any(|c| c.url == citation.url)
+                                                            {
+                                                                citations.push(citation);
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
                                     }
                                 }
                             }
+                            Err(e) => {
+                                if env::var("AI_VERBOSE").unwrap_or_default() == "true" {
+                                    eprintln!(
+                                        "{}",
+                                        format!("[AI] JSON parse error: {}", e).dimmed()
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    "event" | "id" | "retry" => {
+                        // Handle other SSE fields if needed in the future
+                        if env::var("AI_VERBOSE").unwrap_or_default() == "true" {
+                            eprintln!("{}", format!("[AI] SSE {}: {}", field, value).dimmed());
+                        }
+                    }
+                    _ => {
+                        // Unknown field
+                        if env::var("AI_VERBOSE").unwrap_or_default() == "true" {
+                            eprintln!("{}", format!("[AI] Unknown SSE field: {}", field).dimmed());
                         }
                     }
                 }
             }
         }
     }
+
+    // Process any remaining incomplete line
+    if !incomplete_line.is_empty()
+        && incomplete_line.trim() != ""
+        && env::var("AI_VERBOSE").unwrap_or_default() == "true"
+    {
+        eprintln!(
+            "{}",
+            format!(
+                "[AI] Warning: Incomplete SSE line at stream end: {}",
+                incomplete_line
+            )
+            .dimmed()
+        );
+    }
+
+    // Handle case where stream ends without [DONE]
+    let remaining = code_buffer.flush();
+    if !remaining.is_empty() {
+        print!("{}", remaining.trim_end());
+    }
+
+    if !citations.is_empty() {
+        println!("{}", "\n\n---\nSources:".dimmed());
+        for (index, citation) in citations.iter().enumerate() {
+            println!("{}", format!("[{}] {}", index + 1, citation.title).cyan());
+            println!("{}", format!("    {}", citation.url).dimmed());
+        }
+    }
+
+    println!();
+    io::stdout().flush()?;
 
     Ok(())
 }
