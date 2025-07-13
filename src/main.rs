@@ -1,508 +1,27 @@
+mod cli;
+mod config;
+mod highlight;
+mod models;
+mod search;
+mod session;
+
 use clap::Parser;
 use colored::*;
 use futures::StreamExt;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
-use serde::{Deserialize, Serialize};
-use std::env;
-use std::fs;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
 use std::process;
-use syntect::easy::HighlightLines;
-use syntect::highlighting::{Style, ThemeSet};
-use syntect::parsing::SyntaxSet;
-use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
 use tokio::time::{timeout, Duration};
-use uuid::Uuid;
 
-const WEB_SEARCH_KEYWORDS: &[&str] = &[
-    "latest",
-    "recent",
-    "current",
-    "today",
-    "yesterday",
-    "news",
-    "update",
-    "price",
-    "stock",
-    "weather",
-    "score",
-    "result",
-    "released",
-    "announced",
-    "trending",
-    "happening",
-    "now",
-    "breaking",
-    "2024",
-    "2025",
-    "this week",
-    "this month",
-    "real-time",
-    "live",
-    "status",
-    "outage",
-    "down",
-];
-
-const INFO_KEYWORDS: &[&str] = &[
-    "what is",
-    "who is",
-    "where is",
-    "when is",
-    "how to",
-    "tell me about",
-    "explain",
-    "define",
-    "information about",
-];
-
-const NO_SEARCH_KEYWORDS: &[&str] = &[
-    "hi",
-    "hello",
-    "hey",
-    "thanks",
-    "thank you",
-    "bye",
-    "goodbye",
-    "please",
-    "help me write",
-    "code",
-    "implement",
-    "fix",
-    "debug",
-    "create",
-    "make",
-    "build",
-];
-
-const SESSION_EXPIRY_MINUTES: i64 = 30;
-const MAX_CONVERSATION_PAIRS: usize = 3; // Keep last 3 exchanges (6 messages)
-
-#[derive(Parser, Debug)]
-#[command(name = "ai")]
-#[command(about = "AI command-line tool using OpenRouter API", long_about = None)]
-struct Args {
-    #[arg(short = 's', long = "search", help = "Force web search")]
-    force_search: bool,
-
-    #[arg(long = "no-search", help = "Disable web search")]
-    no_search: bool,
-
-    #[arg(short = 'n', long = "new", help = "Start a new conversation")]
-    new_conversation: bool,
-
-    #[arg(
-        short = 'c',
-        long = "continue",
-        help = "Continue previous conversation even if expired"
-    )]
-    force_continue: bool,
-
-    #[arg(long = "clear", help = "Clear all conversation history")]
-    clear_history: bool,
-
-    #[arg(
-        long = "reasoning-effort",
-        help = "Set reasoning effort level (high, medium, low)"
-    )]
-    reasoning_effort: Option<String>,
-
-    #[arg(
-        long = "reasoning-max-tokens",
-        help = "Set maximum tokens for reasoning"
-    )]
-    reasoning_max_tokens: Option<u32>,
-
-    #[arg(
-        long = "reasoning-exclude",
-        help = "Use reasoning but exclude from response"
-    )]
-    reasoning_exclude: bool,
-
-    #[arg(
-        long = "reasoning-enabled",
-        help = "Enable reasoning with default parameters"
-    )]
-    reasoning_enabled: bool,
-
-    #[arg(help = "Command to send to AI")]
-    command: Vec<String>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-struct Message {
-    role: String,
-    content: String,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-struct Session {
-    session_id: String,
-    last_updated: chrono::DateTime<chrono::Local>,
-    messages: Vec<Message>,
-}
-
-#[derive(Serialize)]
-struct WebPlugin {
-    id: String,
-    max_results: u32,
-    search_prompt: String,
-}
-
-#[derive(Serialize)]
-struct Reasoning {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    effort: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_tokens: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    exclude: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    enabled: Option<bool>,
-}
-
-#[derive(Serialize)]
-struct RequestBody {
-    model: String,
-    messages: Vec<Message>,
-    stream: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    plugins: Option<Vec<WebPlugin>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    reasoning: Option<Reasoning>,
-}
-
-#[derive(Deserialize)]
-struct Citation {
-    url: String,
-    title: String,
-    #[allow(dead_code)]
-    content: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct Annotation {
-    #[serde(rename = "type")]
-    annotation_type: String,
-    url_citation: Option<Citation>,
-}
-
-#[derive(Deserialize)]
-struct Delta {
-    content: Option<String>,
-    annotations: Option<Vec<Annotation>>,
-    reasoning: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct Choice {
-    delta: Option<Delta>,
-}
-
-#[derive(Deserialize)]
-struct StreamResponse {
-    choices: Option<Vec<Choice>>,
-}
-
-struct CodeBuffer {
-    buffer: String,
-    in_code_block: bool,
-    code_block_content: String,
-    code_block_lang: Option<String>,
-    syntax_set: SyntaxSet,
-    theme_set: ThemeSet,
-}
-
-impl CodeBuffer {
-    fn new() -> Self {
-        Self {
-            buffer: String::new(),
-            in_code_block: false,
-            code_block_content: String::new(),
-            code_block_lang: None,
-            syntax_set: SyntaxSet::load_defaults_newlines(),
-            theme_set: ThemeSet::load_defaults(),
-        }
-    }
-
-    fn highlight_code(&self, code: &str, lang: Option<&str>) -> String {
-        let theme = &self.theme_set.themes["Solarized (dark)"];
-
-        let syntax = if let Some(lang) = lang {
-            self.syntax_set
-                .find_syntax_by_token(lang)
-                .or_else(|| self.syntax_set.find_syntax_by_extension(lang))
-                .unwrap_or_else(|| self.syntax_set.find_syntax_plain_text())
-        } else {
-            self.syntax_set.find_syntax_plain_text()
-        };
-
-        let mut highlighter = HighlightLines::new(syntax, theme);
-        let mut output = String::new();
-
-        for line in LinesWithEndings::from(code) {
-            let ranges: Vec<(Style, &str)> =
-                highlighter.highlight_line(line, &self.syntax_set).unwrap();
-            let escaped = as_24_bit_terminal_escaped(&ranges[..], false);
-            output.push_str(&escaped);
-        }
-
-        output
-    }
-
-    fn append(&mut self, content: &str) -> String {
-        self.buffer.push_str(content);
-        let mut output = String::new();
-
-        while !self.buffer.is_empty() {
-            if !self.in_code_block {
-                // Look for code block start
-                if let Some(code_start) = self.buffer.find("```") {
-                    // Output everything before the code block
-                    output.push_str(&self.buffer[..code_start]);
-
-                    // Extract the code block marker and language
-                    self.buffer = self.buffer[code_start + 3..].to_string();
-
-                    // Check if we have a complete first line with language
-                    if let Some(newline_pos) = self.buffer.find('\n') {
-                        let lang_line = self.buffer[..newline_pos].trim();
-                        self.code_block_lang = if lang_line.is_empty() {
-                            None
-                        } else {
-                            Some(lang_line.to_string())
-                        };
-
-                        self.buffer = self.buffer[newline_pos + 1..].to_string();
-                        self.in_code_block = true;
-                        self.code_block_content.clear();
-
-                        // Output code block header
-                        output.push_str(&format!(
-                            "{}[{}]{}\n",
-                            "┌─".dimmed(),
-                            self.code_block_lang.as_deref().unwrap_or("code").cyan(),
-                            "─────────────────────────────────────────────────".dimmed()
-                        ));
-                    } else {
-                        // Incomplete first line, wait for more content
-                        self.buffer = format!("```{}", self.buffer);
-                        break;
-                    }
-                } else {
-                    // No code block found, output everything and clear buffer
-                    output.push_str(&self.buffer);
-                    self.buffer.clear();
-                }
-            } else {
-                // In code block, look for end marker
-                if let Some(code_end) = self.buffer.find("```") {
-                    // Add content before the end marker to code block
-                    self.code_block_content.push_str(&self.buffer[..code_end]);
-
-                    // Highlight and output the code
-                    let highlighted = self
-                        .highlight_code(&self.code_block_content, self.code_block_lang.as_deref());
-                    output.push_str(&highlighted);
-
-                    // Output code block footer
-                    output.push_str(&format!(
-                        "{}\n",
-                        "└──────────────────────────────────────────────────────────".dimmed()
-                    ));
-
-                    // Reset state
-                    self.buffer = self.buffer[code_end + 3..].to_string();
-                    self.in_code_block = false;
-                    self.code_block_content.clear();
-                    self.code_block_lang = None;
-                } else {
-                    // Still in code block, accumulate content
-                    self.code_block_content.push_str(&self.buffer);
-                    self.buffer.clear();
-                    break;
-                }
-            }
-        }
-
-        output
-    }
-
-    fn flush(&mut self) -> String {
-        let mut output = String::new();
-
-        if self.in_code_block {
-            // Unterminated code block
-            if !self.code_block_content.is_empty() {
-                let highlighted =
-                    self.highlight_code(&self.code_block_content, self.code_block_lang.as_deref());
-                output.push_str(&highlighted);
-                output.push_str(&format!(
-                    "{}\n",
-                    "└──────────────────────────────────────────────────────────".dimmed()
-                ));
-            }
-        } else if !self.buffer.is_empty() {
-            output.push_str(&self.buffer);
-        }
-
-        self.buffer.clear();
-        self.code_block_content.clear();
-        self.in_code_block = false;
-        self.code_block_lang = None;
-
-        output
-    }
-}
-
-fn get_cache_dir() -> PathBuf {
-    let home = env::var("HOME").expect("HOME environment variable not set");
-    let cache_dir = Path::new(&home).join(".cache").join("cmd2ai");
-    if !cache_dir.exists() {
-        fs::create_dir_all(&cache_dir).expect("Failed to create cache directory");
-    }
-    cache_dir
-}
-
-fn find_recent_session() -> Option<Session> {
-    let cache_dir = get_cache_dir();
-    let now = chrono::Local::now();
-
-    // Read all session files and find the most recent valid one
-    if let Ok(entries) = fs::read_dir(&cache_dir) {
-        let mut sessions: Vec<(PathBuf, Session)> = entries
-            .filter_map(|entry| entry.ok())
-            .filter_map(|entry| {
-                let path = entry.path();
-                if path.extension()? == "json"
-                    && path.file_name()?.to_str()?.starts_with("session-")
-                {
-                    let content = fs::read_to_string(&path).ok()?;
-                    let session: Session = serde_json::from_str(&content).ok()?;
-                    Some((path, session))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        // Sort by last_updated (most recent first)
-        sessions.sort_by(|a, b| b.1.last_updated.cmp(&a.1.last_updated));
-
-        // Return the most recent session if it's not expired
-        if let Some((path, session)) = sessions.first() {
-            let age_minutes = (now - session.last_updated).num_minutes();
-            if age_minutes < SESSION_EXPIRY_MINUTES {
-                return Some(session.clone());
-            } else {
-                // Clean up expired session
-                let _ = fs::remove_file(path);
-            }
-        }
-    }
-
-    None
-}
-
-fn save_session(session: &Session) -> Result<(), Box<dyn std::error::Error>> {
-    let cache_dir = get_cache_dir();
-    let session_file = cache_dir.join(format!("session-{}.json", session.session_id));
-    let content = serde_json::to_string_pretty(session)?;
-    fs::write(session_file, content)?;
-    Ok(())
-}
-
-fn clear_all_sessions() -> Result<(), Box<dyn std::error::Error>> {
-    let cache_dir = get_cache_dir();
-    if let Ok(entries) = fs::read_dir(&cache_dir) {
-        for entry in entries.filter_map(|e| e.ok()) {
-            let path = entry.path();
-            if path.extension() == Some(std::ffi::OsStr::new("json"))
-                && path
-                    .file_name()
-                    .unwrap()
-                    .to_str()
-                    .unwrap()
-                    .starts_with("session-")
-            {
-                fs::remove_file(path)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn trim_conversation_history(messages: &mut Vec<Message>) {
-    // Keep system message (if exists) + last N conversation pairs
-    let mut system_messages: Vec<Message> = messages
-        .iter()
-        .filter(|m| m.role == "system")
-        .cloned()
-        .collect();
-
-    let conversation_messages: Vec<Message> = messages
-        .iter()
-        .filter(|m| m.role != "system")
-        .cloned()
-        .collect();
-
-    // Keep only the last MAX_CONVERSATION_PAIRS exchanges
-    let keep_count = MAX_CONVERSATION_PAIRS * 2; // Each pair has user + assistant
-    let trimmed: Vec<Message> = conversation_messages
-        .into_iter()
-        .rev()
-        .take(keep_count)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
-
-    messages.clear();
-    messages.append(&mut system_messages);
-    messages.extend(trimmed);
-}
-
-fn should_use_web_search(command: &str, force_search: bool, no_search: bool) -> bool {
-    if force_search {
-        return true;
-    }
-    if no_search {
-        return false;
-    }
-
-    let lower_command = command.to_lowercase();
-
-    if NO_SEARCH_KEYWORDS
-        .iter()
-        .any(|&keyword| lower_command.contains(keyword))
-        && !WEB_SEARCH_KEYWORDS
-            .iter()
-            .any(|&keyword| lower_command.contains(keyword))
-    {
-        return false;
-    }
-
-    if WEB_SEARCH_KEYWORDS
-        .iter()
-        .any(|&keyword| lower_command.contains(keyword))
-    {
-        return true;
-    }
-
-    if INFO_KEYWORDS
-        .iter()
-        .any(|&keyword| lower_command.starts_with(keyword))
-    {
-        return lower_command.contains("company")
-            || lower_command.contains("person")
-            || lower_command.contains("event")
-            || lower_command.contains("place")
-            || lower_command.contains("product");
-    }
-
-    false
-}
+use cli::Args;
+use config::Config;
+use highlight::CodeBuffer;
+use models::{Citation, Message, RequestBody, StreamResponse, WebPlugin};
+use search::should_use_web_search;
+use session::{
+    clear_all_sessions, create_new_session, find_recent_session, save_session,
+    trim_conversation_history,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -523,93 +42,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if args.command.is_empty() {
-        eprintln!("{}", "Usage: ai [OPTIONS] <command>".red());
-        eprintln!(
-            "{}",
-            "  -s, --search               Force web search".dimmed()
-        );
-        eprintln!(
-            "{}",
-            "      --no-search            Disable web search".dimmed()
-        );
-        eprintln!(
-            "{}",
-            "  -n, --new                  Start a new conversation".dimmed()
-        );
-        eprintln!(
-            "{}",
-            "  -c, --continue             Continue previous conversation even if expired".dimmed()
-        );
-        eprintln!(
-            "{}",
-            "      --clear                Clear all conversation history".dimmed()
-        );
-        eprintln!(
-            "{}",
-            "      --reasoning-effort     Set reasoning effort level (high, medium, low)".dimmed()
-        );
-        eprintln!(
-            "{}",
-            "      --reasoning-max-tokens Set maximum tokens for reasoning".dimmed()
-        );
-        eprintln!(
-            "{}",
-            "      --reasoning-exclude    Use reasoning but exclude from response".dimmed()
-        );
-        eprintln!(
-            "{}",
-            "      --reasoning-enabled    Enable reasoning with default parameters".dimmed()
-        );
+        print_usage();
         process::exit(1);
     }
 
     let command = args.command.join(" ");
 
-    let api_key = env::var("OPENROUTER_API_KEY").unwrap_or_else(|_| {
-        eprintln!(
-            "{}",
-            "Error: OPENROUTER_API_KEY environment variable not set".red()
-        );
-        process::exit(1);
-    });
-
-    // Security: Never log the API key or enable verbose HTTP logging that could expose headers
-
-    let model = env::var("AI_MODEL").unwrap_or_else(|_| "openai/gpt-4.1-mini".to_string());
+    // Load configuration
+    let config = match Config::from_env_and_args(&args) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("{} {}", "Error:".red(), e);
+            process::exit(1);
+        }
+    };
 
     let use_web_search = should_use_web_search(&command, args.force_search, args.no_search);
 
-    let final_model = if use_web_search && !model.contains(":online") {
-        format!("{}:online", model)
+    let final_model = if use_web_search && !config.model.contains(":online") {
+        format!("{}:online", config.model)
     } else {
-        model
+        config.model.clone()
     };
-
-    let system_prompt = env::var("AI_SYSTEM_PROMPT").ok();
-    let current_date = chrono::Local::now().format("%A, %B %d, %Y").to_string();
 
     // Load or create session
     let mut session = if args.new_conversation {
-        // Create new session
-        Session {
-            session_id: Uuid::new_v4().to_string(),
-            last_updated: chrono::Local::now(),
-            messages: vec![],
-        }
+        create_new_session()
     } else {
-        // Try to find existing session
         let existing_session = find_recent_session();
 
         if args.force_continue && existing_session.is_some() {
-            // Force continue even if expired
             existing_session.unwrap()
         } else {
-            // Use existing if found and not expired, otherwise create new
-            existing_session.unwrap_or_else(|| Session {
-                session_id: Uuid::new_v4().to_string(),
-                last_updated: chrono::Local::now(),
-                messages: vec![],
-            })
+            existing_session.unwrap_or_else(create_new_session)
         }
     };
 
@@ -618,8 +83,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Add system message if this is a new conversation or no system message exists
     if messages.is_empty() || messages.first().map(|m| &m.role) != Some(&"system".to_string()) {
-        let date_prompt = format!("Today's date is {}.", current_date);
-        let system_content = if let Some(prompt) = system_prompt {
+        let date_prompt = format!("Today's date is {}.", Config::get_current_date());
+        let system_content = if let Some(prompt) = &config.system_prompt {
             format!("{}\n\n{}", date_prompt, prompt)
         } else {
             date_prompt
@@ -644,97 +109,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     trim_conversation_history(&mut messages);
 
     let plugins = if use_web_search {
-        let max_results = env::var("AI_WEB_SEARCH_MAX_RESULTS")
-            .ok()
-            .and_then(|s| s.parse::<u32>().ok())
-            .unwrap_or(5);
-
-        let search_date = chrono::Local::now().format("%B %d, %Y").to_string();
-
         Some(vec![WebPlugin {
             id: "web".to_string(),
-            max_results,
+            max_results: config.web_search_max_results,
             search_prompt: format!(
                 "A web search was conducted on {}. Use the following web search results to answer the user's question.\n\nIMPORTANT: Do NOT include URLs or citations in your answer. Just provide a clean, natural response based on the information found. The sources will be displayed separately.",
-                search_date
+                Config::get_search_date()
             ),
         }])
     } else {
         None
     };
 
-    // Build reasoning configuration from command-line arguments and environment variables
-    // Command-line arguments take precedence over environment variables
-    let env_reasoning_enabled = env::var("AI_REASONING_ENABLED")
-        .ok()
-        .and_then(|v| match v.to_lowercase().as_str() {
-            "true" | "1" | "yes" => Some(true),
-            _ => None,
-        })
-        .unwrap_or(false);
-
-    let env_reasoning_effort = env::var("AI_REASONING_EFFORT")
-        .ok()
-        .filter(|e| ["high", "medium", "low"].contains(&e.to_lowercase().as_str()))
-        .map(|e| e.to_lowercase());
-
-    let env_reasoning_max_tokens = env::var("AI_REASONING_MAX_TOKENS")
-        .ok()
-        .and_then(|s| s.parse::<u32>().ok());
-
-    let env_reasoning_exclude = env::var("AI_REASONING_EXCLUDE")
-        .ok()
-        .and_then(|v| match v.to_lowercase().as_str() {
-            "true" | "1" | "yes" => Some(true),
-            _ => None,
-        })
-        .unwrap_or(false);
-
-    // Determine final values with CLI args taking precedence
-    let final_reasoning_enabled = args.reasoning_enabled || env_reasoning_enabled;
-    let final_reasoning_effort = args.reasoning_effort.clone().or(env_reasoning_effort);
-    let final_reasoning_max_tokens = args.reasoning_max_tokens.or(env_reasoning_max_tokens);
-    let final_reasoning_exclude = args.reasoning_exclude || env_reasoning_exclude;
-
-    let reasoning = if final_reasoning_enabled
-        || final_reasoning_effort.is_some()
-        || final_reasoning_max_tokens.is_some()
-        || final_reasoning_exclude
-    {
-        Some(Reasoning {
-            effort: final_reasoning_effort
-                .clone()
-                .filter(|e| ["high", "medium", "low"].contains(&e.as_str())),
-            max_tokens: final_reasoning_max_tokens,
-            exclude: if final_reasoning_exclude {
-                Some(true)
-            } else {
-                None
-            },
-            enabled: if final_reasoning_enabled {
-                Some(true)
-            } else {
-                None
-            },
-        })
-    } else {
-        None
-    };
-
     // Log reasoning configuration before moving it
-    if env::var("AI_VERBOSE").unwrap_or_default() == "true" && reasoning.is_some() {
+    if config.verbose && config.reasoning.is_some() {
         eprintln!("{}", "[AI] Reasoning: enabled".dimmed());
-        if let Some(ref effort) = final_reasoning_effort {
-            eprintln!("{}", format!("[AI] Reasoning effort: {}", effort).dimmed());
-        }
-        if let Some(max_tokens) = final_reasoning_max_tokens {
-            eprintln!(
-                "{}",
-                format!("[AI] Reasoning max tokens: {}", max_tokens).dimmed()
-            );
-        }
-        if final_reasoning_exclude {
-            eprintln!("{}", "[AI] Reasoning output: excluded".dimmed());
+        if let Some(ref reasoning) = config.reasoning {
+            if let Some(ref effort) = reasoning.effort {
+                eprintln!("{}", format!("[AI] Reasoning effort: {}", effort).dimmed());
+            }
+            if let Some(max_tokens) = reasoning.max_tokens {
+                eprintln!(
+                    "{}",
+                    format!("[AI] Reasoning max tokens: {}", max_tokens).dimmed()
+                );
+            }
+            if reasoning.exclude == Some(true) {
+                eprintln!("{}", "[AI] Reasoning output: excluded".dimmed());
+            }
         }
     }
 
@@ -743,10 +145,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         messages: messages.clone(),
         stream: true,
         plugins,
-        reasoning,
+        reasoning: config.reasoning,
     };
 
-    if env::var("AI_VERBOSE").unwrap_or_default() == "true" {
+    if config.verbose {
         eprintln!("{}", format!("[AI] Using model: {}", final_model).dimmed());
         eprintln!(
             "{}",
@@ -763,31 +165,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if use_web_search {
             eprintln!(
                 "{}",
-                format!(
-                    "[AI] Max search results: {}",
-                    env::var("AI_WEB_SEARCH_MAX_RESULTS").unwrap_or_else(|_| "5".to_string())
-                )
-                .dimmed()
+                format!("[AI] Max search results: {}", config.web_search_max_results).dimmed()
             );
         }
     }
 
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {}", api_key))?,
-    );
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-
-    // Build client with explicit configuration to prevent logging sensitive data
-    let client = reqwest::Client::builder()
-        .default_headers(headers)
-        .build()?;
-    let response = client
-        .post("https://openrouter.ai/api/v1/chat/completions")
-        .json(&request_body)
-        .send()
-        .await?;
+    // Make API request
+    let response = make_api_request(&config.api_key, &request_body).await?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -801,6 +185,105 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         process::exit(1);
     }
 
+    // Process streaming response
+    let assistant_response = process_streaming_response(
+        response,
+        config.stream_timeout,
+        args.reasoning_exclude,
+        config.verbose,
+    )
+    .await?;
+
+    // Save session with assistant's response
+    if !assistant_response.is_empty() {
+        session.messages = messages;
+        session.messages.push(Message {
+            role: "assistant".to_string(),
+            content: assistant_response,
+        });
+        session.last_updated = chrono::Local::now();
+
+        if let Err(e) = save_session(&session) {
+            if config.verbose {
+                eprintln!(
+                    "{}",
+                    format!("[AI] Warning: Failed to save session: {}", e).dimmed()
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn print_usage() {
+    eprintln!("{}", "Usage: ai [OPTIONS] <command>".red());
+    eprintln!(
+        "{}",
+        "  -s, --search               Force web search".dimmed()
+    );
+    eprintln!(
+        "{}",
+        "      --no-search            Disable web search".dimmed()
+    );
+    eprintln!(
+        "{}",
+        "  -n, --new                  Start a new conversation".dimmed()
+    );
+    eprintln!(
+        "{}",
+        "  -c, --continue             Continue previous conversation even if expired".dimmed()
+    );
+    eprintln!(
+        "{}",
+        "      --clear                Clear all conversation history".dimmed()
+    );
+    eprintln!(
+        "{}",
+        "      --reasoning-effort     Set reasoning effort level (high, medium, low)".dimmed()
+    );
+    eprintln!(
+        "{}",
+        "      --reasoning-max-tokens Set maximum tokens for reasoning".dimmed()
+    );
+    eprintln!(
+        "{}",
+        "      --reasoning-exclude    Use reasoning but exclude from response".dimmed()
+    );
+    eprintln!(
+        "{}",
+        "      --reasoning-enabled    Enable reasoning with default parameters".dimmed()
+    );
+}
+
+async fn make_api_request(
+    api_key: &str,
+    request_body: &RequestBody,
+) -> Result<reqwest::Response, reqwest::Error> {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!("Bearer {}", api_key)).unwrap(),
+    );
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+    let client = reqwest::Client::builder()
+        .default_headers(headers)
+        .build()?;
+
+    client
+        .post("https://openrouter.ai/api/v1/chat/completions")
+        .json(&request_body)
+        .send()
+        .await
+}
+
+async fn process_streaming_response(
+    response: reqwest::Response,
+    timeout_secs: u64,
+    reasoning_exclude: bool,
+    verbose: bool,
+) -> Result<String, Box<dyn std::error::Error>> {
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
     let mut citations: Vec<Citation> = vec![];
@@ -808,15 +291,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut last_flush = std::time::Instant::now();
     let flush_interval = std::time::Duration::from_millis(50);
     let mut incomplete_line = String::new();
-    let mut assistant_response = String::new(); // Accumulate assistant's response
-    let mut reasoning_response = String::new(); // Accumulate reasoning tokens
-    let mut reasoning_buffer = String::new(); // Buffer for displaying reasoning
-    let mut reasoning_displayed = false; // Track if we've displayed reasoning header
-    let mut last_reasoning_ended_with_newline = false; // Track if last reasoning chunk ended with newline
-    let timeout_secs = env::var("AI_STREAM_TIMEOUT")
-        .ok()
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(30);
+    let mut assistant_response = String::new();
+    let mut reasoning_response = String::new();
+    let mut reasoning_buffer = String::new();
+    let mut reasoning_displayed = false;
     let chunk_timeout = Duration::from_secs(timeout_secs);
 
     loop {
@@ -824,16 +302,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(Some(chunk)) => {
                 let chunk = chunk?;
                 let text = String::from_utf8_lossy(&chunk);
-
-                // Append new data to incomplete line from previous chunk
                 incomplete_line.push_str(&text);
             }
-            Ok(None) => {
-                // Stream ended normally
-                break;
-            }
+            Ok(None) => break,
             Err(_) => {
-                // Timeout occurred
                 eprintln!(
                     "{}",
                     format!(
@@ -848,7 +320,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .dimmed()
                 );
 
-                // Flush any buffered content before exiting
                 let remaining = code_buffer.flush();
                 if !remaining.is_empty() {
                     print!("{}", remaining.trim_end());
@@ -862,12 +333,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Find last newline to ensure we only process complete lines
         if let Some(last_newline_pos) = incomplete_line.rfind('\n') {
-            // Add complete lines to buffer
             buffer.push_str(&incomplete_line[..=last_newline_pos]);
-            // Keep incomplete part for next iteration
             incomplete_line = incomplete_line[last_newline_pos + 1..].to_string();
         } else {
-            // No complete line yet, continue accumulating
             continue;
         }
 
@@ -876,7 +344,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let line = buffer[..line_end].to_string();
             buffer = buffer[line_end + 1..].to_string();
 
-            // Handle SSE format - skip empty lines and comments
             if line.is_empty() || line.starts_with(':') {
                 continue;
             }
@@ -890,19 +357,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "data" => {
                         if value == "[DONE]" {
                             // Close reasoning section if it was displayed
-                            if reasoning_displayed && !final_reasoning_exclude {
+                            if reasoning_displayed && !reasoning_exclude {
                                 // Check how many trailing newlines we have
-                                let trailing_newlines = reasoning_buffer.chars().rev().take_while(|&c| c == '\n').count();
-                                
+                                let trailing_newlines = reasoning_buffer
+                                    .chars()
+                                    .rev()
+                                    .take_while(|&c| c == '\n')
+                                    .count();
+
                                 // If we have more than one trailing newline, we need to handle the extra space
                                 if trailing_newlines > 1 {
                                     // Use backspace to remove extra lines
                                     print!("\x1b[{}A", trailing_newlines - 1);
                                 }
-                                
-                                println!("{}", "└──────────────────────────────────────────────────────────".dimmed());
+
+                                println!(
+                                    "{}",
+                                    "└──────────────────────────────────────────────────────────"
+                                        .dimmed()
+                                );
                             }
-                            
 
                             // Flush any remaining content
                             let remaining = code_buffer.flush();
@@ -925,30 +399,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             println!();
                             io::stdout().flush()?;
 
-                            // Save session before returning
-                            if !assistant_response.is_empty() {
-                                session.messages = messages;
-                                session.messages.push(Message {
-                                    role: "assistant".to_string(),
-                                    content: assistant_response,
-                                });
-                                session.last_updated = chrono::Local::now();
-
-                                if let Err(e) = save_session(&session) {
-                                    if env::var("AI_VERBOSE").unwrap_or_default() == "true" {
-                                        eprintln!(
-                                            "{}",
-                                            format!("[AI] Warning: Failed to save session: {}", e)
-                                                .dimmed()
-                                        );
-                                    }
-                                }
-                            }
-
-                            return Ok(());
+                            return Ok(assistant_response);
                         }
 
-                        // Parse JSON data with better error handling
+                        // Parse JSON data
                         match serde_json::from_str::<StreamResponse>(value) {
                             Ok(parsed) => {
                                 if let Some(choices) = parsed.choices {
@@ -956,21 +410,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         if let Some(delta) = choice.delta {
                                             // Process reasoning tokens
                                             if let Some(reasoning) = delta.reasoning {
-                                                // Accumulate reasoning response
                                                 reasoning_response.push_str(&reasoning);
                                                 reasoning_buffer.push_str(&reasoning);
 
-                                                // Display reasoning if not excluded
-                                                if !final_reasoning_exclude {
-                                                    // Display reasoning header on first chunk
+                                                if !reasoning_exclude {
                                                     if !reasoning_displayed {
                                                         println!("{}", format!("{}[REASONING]{}", "┌─".dimmed(), "──────────────────────────────────────────────".dimmed()).cyan());
                                                         reasoning_displayed = true;
                                                     }
 
-                                                    // Display reasoning content as it comes
                                                     print!("{}", reasoning);
-                                                    last_reasoning_ended_with_newline = reasoning.ends_with('\n');
                                                     if last_flush.elapsed() > flush_interval {
                                                         io::stdout().flush()?;
                                                         last_flush = std::time::Instant::now();
@@ -980,24 +429,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                             // Process content
                                             if let Some(content) = delta.content {
-                                                // If we were displaying reasoning, close it first
-                                                if reasoning_displayed && !final_reasoning_exclude {
-                                                    // Only add newline if last reasoning didn't end with one
-                                                    if !last_reasoning_ended_with_newline {
-                                                        println!();
-                                                    }
+                                                if reasoning_displayed && !reasoning_exclude {
+                                                    println!();
                                                     println!("{}", "└──────────────────────────────────────────────────────────".dimmed());
                                                     reasoning_displayed = false;
                                                 }
 
-                                                // Accumulate response for session
                                                 assistant_response.push_str(&content);
 
                                                 let formatted = code_buffer.append(&content);
                                                 if !formatted.is_empty() {
                                                     print!("{}", formatted);
 
-                                                    // Batch flushes for better performance
                                                     if last_flush.elapsed() > flush_interval {
                                                         io::stdout().flush()?;
                                                         last_flush = std::time::Instant::now();
@@ -1028,7 +471,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                             Err(e) => {
-                                if env::var("AI_VERBOSE").unwrap_or_default() == "true" {
+                                if verbose {
                                     eprintln!(
                                         "{}",
                                         format!("[AI] JSON parse error: {}", e).dimmed()
@@ -1038,14 +481,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                     "event" | "id" | "retry" => {
-                        // Handle other SSE fields if needed in the future
-                        if env::var("AI_VERBOSE").unwrap_or_default() == "true" {
+                        if verbose {
                             eprintln!("{}", format!("[AI] SSE {}: {}", field, value).dimmed());
                         }
                     }
                     _ => {
-                        // Unknown field
-                        if env::var("AI_VERBOSE").unwrap_or_default() == "true" {
+                        if verbose {
                             eprintln!("{}", format!("[AI] Unknown SSE field: {}", field).dimmed());
                         }
                     }
@@ -1054,27 +495,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Process any remaining incomplete line
-    if !incomplete_line.is_empty()
-        && incomplete_line.trim() != ""
-        && env::var("AI_VERBOSE").unwrap_or_default() == "true"
-    {
-        eprintln!(
-            "{}",
-            format!(
-                "[AI] Warning: Incomplete SSE line at stream end: {}",
-                incomplete_line
-            )
-            .dimmed()
-        );
-    }
-
     // Handle case where stream ends without [DONE]
+    if reasoning_displayed && !reasoning_exclude {
+        let trailing_newlines = reasoning_buffer
+            .chars()
+            .rev()
+            .take_while(|&c| c == '\n')
+            .count();
 
-    // Close reasoning section if it was displayed
-    if reasoning_displayed && !final_reasoning_exclude {
-        // Just print the closing bar
-        println!("{}", "└──────────────────────────────────────────────────────────".dimmed());
+        if trailing_newlines > 1 {
+            print!("\x1b[{}A", trailing_newlines - 1);
+        }
+
+        println!(
+            "{}",
+            "└──────────────────────────────────────────────────────────".dimmed()
+        );
     }
 
     let remaining = code_buffer.flush();
@@ -1093,24 +529,5 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
     io::stdout().flush()?;
 
-    // Save session with assistant's response
-    if !assistant_response.is_empty() {
-        session.messages = messages;
-        session.messages.push(Message {
-            role: "assistant".to_string(),
-            content: assistant_response,
-        });
-        session.last_updated = chrono::Local::now();
-
-        if let Err(e) = save_session(&session) {
-            if env::var("AI_VERBOSE").unwrap_or_default() == "true" {
-                eprintln!(
-                    "{}",
-                    format!("[AI] Warning: Failed to save session: {}", e).dimmed()
-                );
-            }
-        }
-    }
-
-    Ok(())
+    Ok(assistant_response)
 }
