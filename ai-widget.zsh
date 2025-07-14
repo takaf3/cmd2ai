@@ -8,7 +8,8 @@ function _ai_capital_interceptor() {
     local buffer="$BUFFER"
     
     # Check if buffer starts with a capital letter
-    if [[ "$buffer" =~ ^[A-Z] ]]; then
+    # but exclude environment variable assignments (VAR=value command)
+    if [[ "$buffer" =~ ^[A-Z] && ! "$buffer" =~ ^[^[:space:]]+= ]]; then
         # Build the ai command safely by quoting the buffer
         local cmd="ai \"${buffer}\""
         
