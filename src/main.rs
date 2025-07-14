@@ -358,19 +358,8 @@ async fn process_streaming_response(
                         if value == "[DONE]" {
                             // Close reasoning section if it was displayed
                             if reasoning_displayed && !reasoning_exclude {
-                                // Check how many trailing newlines we have
-                                let trailing_newlines = reasoning_buffer
-                                    .chars()
-                                    .rev()
-                                    .take_while(|&c| c == '\n')
-                                    .count();
-
-                                // If we have more than one trailing newline, we need to handle the extra space
-                                if trailing_newlines > 1 {
-                                    // Use backspace to remove extra lines
-                                    print!("\x1b[{}A", trailing_newlines - 1);
-                                }
-
+                                // Always ensure we're on a new line before closing the box
+                                println!();
                                 println!(
                                     "{}",
                                     "└──────────────────────────────────────────────────────────"
@@ -415,24 +404,37 @@ async fn process_streaming_response(
 
                                                 if !reasoning_exclude {
                                                     if !reasoning_displayed {
-                                                        println!("{}", format!("{}[REASONING]{}", "┌─".dimmed(), "──────────────────────────────────────────────".dimmed()).cyan());
+                                                        println!();
+                                                        println!("{}", format!("{}[{}]{}", "┌─".dimmed(), "REASONING".cyan().bold(), "──────────────────────────────────────────────".dimmed()));
                                                         reasoning_displayed = true;
                                                     }
 
-                                                    print!("{}", reasoning);
-                                                    if last_flush.elapsed() > flush_interval {
-                                                        io::stdout().flush()?;
-                                                        last_flush = std::time::Instant::now();
+                                                    // Clean up markdown formatting for display
+                                                    let display_reasoning = reasoning
+                                                        .replace("**", "")
+                                                        .trim_end()
+                                                        .to_string();
+                                                    
+                                                    if !display_reasoning.is_empty() {
+                                                        print!("{}", display_reasoning.dimmed());
+                                                        if last_flush.elapsed() > flush_interval {
+                                                            io::stdout().flush()?;
+                                                            last_flush = std::time::Instant::now();
+                                                        }
                                                     }
                                                 }
                                             }
 
                                             // Process content
                                             if let Some(content) = delta.content {
-                                                if reasoning_displayed && !reasoning_exclude {
+                                                // Only close reasoning block if we have actual content (not just empty string)
+                                                if reasoning_displayed && !reasoning_exclude && !content.trim().is_empty() {
+                                                    // Always ensure we're on a new line before closing the box
                                                     println!();
                                                     println!("{}", "└──────────────────────────────────────────────────────────".dimmed());
+                                                    println!(); // Add spacing after reasoning block
                                                     reasoning_displayed = false;
+                                                    reasoning_buffer.clear();
                                                 }
 
                                                 assistant_response.push_str(&content);
