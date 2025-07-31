@@ -11,6 +11,7 @@ pub struct CodeBuffer {
     code_block_lang: Option<String>,
     syntax_set: SyntaxSet,
     theme_set: ThemeSet,
+    displayed_lines: usize,
 }
 
 impl CodeBuffer {
@@ -22,6 +23,7 @@ impl CodeBuffer {
             code_block_lang: None,
             syntax_set: SyntaxSet::load_defaults_newlines(),
             theme_set: ThemeSet::load_defaults(),
+            displayed_lines: 0,
         }
     }
 
@@ -76,6 +78,7 @@ impl CodeBuffer {
                         self.buffer = self.buffer[newline_pos + 1..].to_string();
                         self.in_code_block = true;
                         self.code_block_content.clear();
+                        self.displayed_lines = 0;
 
                         // Output code block header
                         output.push_str(&format!(
@@ -100,10 +103,16 @@ impl CodeBuffer {
                     // Add content before the end marker to code block
                     self.code_block_content.push_str(&self.buffer[..code_end]);
 
-                    // Highlight and output the code
-                    let highlighted = self
-                        .highlight_code(&self.code_block_content, self.code_block_lang.as_deref());
-                    output.push_str(&highlighted);
+                    // Highlight and output any remaining lines
+                    let all_lines: Vec<&str> = self.code_block_content.lines().collect();
+                    if self.displayed_lines < all_lines.len() {
+                        let remaining_lines: Vec<&str> = all_lines[self.displayed_lines..].to_vec();
+                        if !remaining_lines.is_empty() {
+                            let remaining_content = remaining_lines.join("\n") + "\n";
+                            let highlighted = self.highlight_code(&remaining_content, self.code_block_lang.as_deref());
+                            output.push_str(&highlighted);
+                        }
+                    }
 
                     // Output code block footer
                     output.push_str(&format!(
@@ -116,10 +125,29 @@ impl CodeBuffer {
                     self.in_code_block = false;
                     self.code_block_content.clear();
                     self.code_block_lang = None;
+                    self.displayed_lines = 0;
                 } else {
-                    // Still in code block, accumulate content
+                    // Still in code block, accumulate content and highlight incrementally
                     self.code_block_content.push_str(&self.buffer);
                     self.buffer.clear();
+                    
+                    // Count complete lines in the accumulated content
+                    let complete_lines: Vec<&str> = self.code_block_content.lines().collect();
+                    let total_lines = complete_lines.len();
+                    
+                    // Check if we have new complete lines to display
+                    if total_lines > self.displayed_lines && total_lines > 0 {
+                        // Highlight only the new lines
+                        let new_lines: Vec<&str> = complete_lines[self.displayed_lines..total_lines - 1].to_vec();
+                        
+                        if !new_lines.is_empty() {
+                            let new_content = new_lines.join("\n") + "\n";
+                            let highlighted = self.highlight_code(&new_content, self.code_block_lang.as_deref());
+                            output.push_str(&highlighted);
+                            self.displayed_lines = total_lines - 1;
+                        }
+                    }
+                    
                     break;
                 }
             }
@@ -134,9 +162,22 @@ impl CodeBuffer {
         if self.in_code_block {
             // Unterminated code block
             if !self.code_block_content.is_empty() {
-                let highlighted =
-                    self.highlight_code(&self.code_block_content, self.code_block_lang.as_deref());
-                output.push_str(&highlighted);
+                // Highlight any remaining lines that haven't been displayed
+                let all_lines: Vec<&str> = self.code_block_content.lines().collect();
+                if self.displayed_lines < all_lines.len() {
+                    let remaining_lines: Vec<&str> = all_lines[self.displayed_lines..].to_vec();
+                    if !remaining_lines.is_empty() {
+                        let remaining_content = remaining_lines.join("\n");
+                        // Add newline only if the original content ended with one
+                        let final_content = if self.code_block_content.ends_with('\n') {
+                            remaining_content + "\n"
+                        } else {
+                            remaining_content
+                        };
+                        let highlighted = self.highlight_code(&final_content, self.code_block_lang.as_deref());
+                        output.push_str(&highlighted);
+                    }
+                }
                 output.push_str(&format!(
                     "{}\n",
                     "└──────────────────────────────────────────────────────────".dimmed()
@@ -150,6 +191,7 @@ impl CodeBuffer {
         self.code_block_content.clear();
         self.in_code_block = false;
         self.code_block_lang = None;
+        self.displayed_lines = 0;
 
         output
     }
