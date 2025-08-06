@@ -27,6 +27,21 @@ impl CodeBuffer {
         }
     }
 
+    fn find_code_block_end(&self, text: &str) -> Option<usize> {
+        // Look for ``` at the beginning of a line
+        if text.starts_with("```") {
+            return Some(0);
+        }
+        
+        // Look for \n``` in the text
+        if let Some(pos) = text.find("\n```") {
+            // Return position of the backticks (after the newline)
+            return Some(pos + 1);
+        }
+        
+        None
+    }
+
     fn highlight_code(&self, code: &str, lang: Option<&str>) -> String {
         let theme = &self.theme_set.themes["Solarized (dark)"];
 
@@ -98,8 +113,9 @@ impl CodeBuffer {
                     self.buffer.clear();
                 }
             } else {
-                // In code block, look for end marker
-                if let Some(code_end) = self.buffer.find("```") {
+                // In code block, look for end marker at the beginning of a line
+                let code_end = self.find_code_block_end(&self.buffer);
+                if let Some(code_end) = code_end {
                     // Add content before the end marker to code block
                     self.code_block_content.push_str(&self.buffer[..code_end]);
 
@@ -108,20 +124,34 @@ impl CodeBuffer {
                     if self.displayed_lines < all_lines.len() {
                         let remaining_lines: Vec<&str> = all_lines[self.displayed_lines..].to_vec();
                         if !remaining_lines.is_empty() {
-                            let remaining_content = remaining_lines.join("\n") + "\n";
-                            let highlighted = self.highlight_code(&remaining_content, self.code_block_lang.as_deref());
+                            let remaining_content = remaining_lines.join("\n");
+                            // Add final newline only if the original content had one
+                            let final_content = if self.code_block_content.ends_with('\n') || code_end > 0 {
+                                remaining_content + "\n"
+                            } else {
+                                remaining_content
+                            };
+                            let highlighted = self.highlight_code(&final_content, self.code_block_lang.as_deref());
                             output.push_str(&highlighted);
                         }
                     }
 
                     // Output code block footer
                     output.push_str(&format!(
-                        "{}\n",
+                        "{}",
                         "└──────────────────────────────────────────────────────────".dimmed()
                     ));
 
+                    // Consume the closing ``` and check what comes after
+                    let after_marker = &self.buffer[code_end + 3..];
+                    
+                    // Only add newline after footer if there's content following or a newline
+                    if !after_marker.is_empty() {
+                        output.push('\n');
+                    }
+                    
                     // Reset state
-                    self.buffer = self.buffer[code_end + 3..].to_string();
+                    self.buffer = after_marker.to_string();
                     self.in_code_block = false;
                     self.code_block_content.clear();
                     self.code_block_lang = None;
@@ -129,25 +159,36 @@ impl CodeBuffer {
                 } else {
                     // Still in code block, accumulate content and highlight incrementally
                     self.code_block_content.push_str(&self.buffer);
-                    self.buffer.clear();
                     
                     // Count complete lines in the accumulated content
                     let complete_lines: Vec<&str> = self.code_block_content.lines().collect();
                     let total_lines = complete_lines.len();
                     
+                    // Check if the last line is incomplete (doesn't end with newline)
+                    let has_incomplete_last_line = !self.code_block_content.ends_with('\n') 
+                        && !self.buffer.is_empty();
+                    
+                    // Determine how many lines to display
+                    let lines_to_display = if has_incomplete_last_line && total_lines > 0 {
+                        total_lines - 1  // Don't display the incomplete last line yet
+                    } else {
+                        total_lines
+                    };
+                    
                     // Check if we have new complete lines to display
-                    if total_lines > self.displayed_lines && total_lines > 0 {
-                        // Highlight only the new lines
-                        let new_lines: Vec<&str> = complete_lines[self.displayed_lines..total_lines - 1].to_vec();
+                    if lines_to_display > self.displayed_lines {
+                        // Highlight only the new complete lines
+                        let new_lines: Vec<&str> = complete_lines[self.displayed_lines..lines_to_display].to_vec();
                         
                         if !new_lines.is_empty() {
                             let new_content = new_lines.join("\n") + "\n";
                             let highlighted = self.highlight_code(&new_content, self.code_block_lang.as_deref());
                             output.push_str(&highlighted);
-                            self.displayed_lines = total_lines - 1;
+                            self.displayed_lines = lines_to_display;
                         }
                     }
                     
+                    self.buffer.clear();
                     break;
                 }
             }
@@ -179,7 +220,7 @@ impl CodeBuffer {
                     }
                 }
                 output.push_str(&format!(
-                    "{}\n",
+                    "{}",
                     "└──────────────────────────────────────────────────────────".dimmed()
                 ));
             }
