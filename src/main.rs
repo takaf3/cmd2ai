@@ -17,7 +17,7 @@ use tokio::time::{timeout, Duration};
 use cli::Args;
 use config::Config;
 use highlight::CodeBuffer;
-use mcp::McpClient;
+use mcp::{McpClient, McpToolCall};
 use models::{Citation, Message, RequestBody, StreamResponse, WebPlugin};
 use search::should_use_web_search;
 use session::{
@@ -196,14 +196,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
+    // Use non-streaming when tools are available to properly handle tool calls
+    let use_streaming = tools.is_none();
+    
     let request_body = RequestBody {
         model: final_model.clone(),
         messages: messages.clone(),
-        stream: true,
+        stream: use_streaming,
         plugins,
         reasoning: config.reasoning,
-        tools,
+        tools: tools.clone(),
     };
+    
+    // Debug: Print tools being sent
+    if config.verbose && tools.is_some() {
+        eprintln!("{}", "[AI] Sending tools to model for function calling".dimmed());
+    }
 
     if config.verbose {
         eprintln!("{}", format!("[AI] Using model: {}", final_model).dimmed());
@@ -242,14 +250,88 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         process::exit(1);
     }
 
-    // Process streaming response
-    let assistant_response = process_streaming_response(
-        response,
-        config.stream_timeout,
-        args.reasoning_exclude,
-        config.verbose,
-    )
-    .await?;
+    // Process response - streaming or non-streaming based on tools
+    let assistant_response = if use_streaming {
+        process_streaming_response(
+            response,
+            config.stream_timeout,
+            args.reasoning_exclude,
+            config.verbose,
+        )
+        .await?
+    } else {
+        // Non-streaming response for tool handling
+        let response_text = response.text().await?;
+        if config.verbose {
+            eprintln!("{}", format!("[AI] Raw response: {}", response_text).dimmed());
+        }
+        
+        // Parse the response
+        let response_json: serde_json::Value = serde_json::from_str(&response_text)?;
+        
+        // Check for tool calls in the response
+        if let Some(choices) = response_json.get("choices").and_then(|c| c.as_array()) {
+            if let Some(first_choice) = choices.first() {
+                if let Some(message) = first_choice.get("message") {
+                    // Check if there are tool calls
+                    if let Some(tool_calls) = message.get("tool_calls").and_then(|tc| tc.as_array()) {
+                        println!("{}", "Executing tools...".cyan());
+                        
+                        // Execute each tool call
+                        for tool_call in tool_calls {
+                            if let (Some(id), Some(function)) = (
+                                tool_call.get("id").and_then(|i| i.as_str()),
+                                tool_call.get("function")
+                            ) {
+                                if let (Some(name), Some(arguments_str)) = (
+                                    function.get("name").and_then(|n| n.as_str()),
+                                    function.get("arguments").and_then(|a| a.as_str())
+                                ) {
+                                    println!("{}", format!("Calling tool: {}", name).yellow());
+                                    
+                                    // Parse arguments
+                                    if let Ok(arguments) = serde_json::from_str::<serde_json::Value>(arguments_str) {
+                                        // Execute tool via MCP
+                                        if let Some(ref client) = mcp_client {
+                                            let tool_call = mcp::McpToolCall {
+                                                name: name.to_string(),
+                                                arguments,
+                                            };
+                                            
+                                            match client.call_tool(&tool_call).await {
+                                                Ok(result) => {
+                                                    println!("{}", "Tool executed successfully!".green());
+                                                    // Format result for display
+                                                    if let Some(content) = result.content.first() {
+                                                        println!("{}", content.text);
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    eprintln!("{}", format!("Tool execution error: {}", e).red());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        "Tools executed successfully".to_string()
+                    } else if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
+                        content.to_string()
+                    } else {
+                        "No response content".to_string()
+                    }
+                } else {
+                    "No message in response".to_string()
+                }
+            } else {
+                "No choices in response".to_string()
+            }
+        } else {
+            "Invalid response format".to_string()
+        }
+    };
 
     // Save session with assistant's response
     if !assistant_response.is_empty() {
