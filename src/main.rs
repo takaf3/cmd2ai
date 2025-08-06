@@ -1,6 +1,7 @@
 mod cli;
 mod config;
 mod highlight;
+mod mcp;
 mod models;
 mod search;
 mod session;
@@ -16,6 +17,7 @@ use tokio::time::{timeout, Duration};
 use cli::Args;
 use config::Config;
 use highlight::CodeBuffer;
+use mcp::McpClient;
 use models::{Citation, Message, RequestBody, StreamResponse, WebPlugin};
 use search::should_use_web_search;
 use session::{
@@ -57,6 +59,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    // Initialize MCP client if servers are specified
+    let mcp_client = if !args.mcp_servers.is_empty() {
+        let client = McpClient::new();
+        
+        for server_spec in &args.mcp_servers {
+            let parts: Vec<&str> = server_spec.splitn(3, ':').collect();
+            if parts.len() < 2 {
+                eprintln!("{} Invalid MCP server format: {}", "Error:".red(), server_spec);
+                eprintln!("Expected format: name:command or name:command:arg1,arg2,...");
+                process::exit(1);
+            }
+            
+            let server_name = parts[0];
+            let command = parts[1];
+            let args_str = if parts.len() > 2 { parts[2] } else { "" };
+            let server_args: Vec<String> = if !args_str.is_empty() {
+                args_str.split(',').map(|s| s.to_string()).collect()
+            } else {
+                vec![]
+            };
+            
+            println!("{}", format!("Connecting to MCP server '{}'...", server_name).cyan());
+            if let Err(e) = client.connect_server(server_name, command, server_args).await {
+                eprintln!("{} Failed to connect to MCP server '{}': {}", "Error:".red(), server_name, e);
+                process::exit(1);
+            }
+        }
+        
+        Some(client)
+    } else {
+        None
+    };
+
     let use_web_search = should_use_web_search(&command, args.force_search, args.no_search);
 
     let final_model = if use_web_search && !config.model.contains(":online") {
@@ -94,7 +129,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             0,
             Message {
                 role: "system".to_string(),
-                content: system_content,
+                content: Some(system_content),
+                tool_calls: None,
+                tool_call_id: None,
             },
         );
     }
@@ -102,7 +139,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Add user message
     messages.push(Message {
         role: "user".to_string(),
-        content: command.clone(),
+        content: Some(command.clone()),
+        tool_calls: None,
+        tool_call_id: None,
     });
 
     // Trim history if needed
@@ -140,12 +179,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Get available tools if MCP is enabled and use_tools flag is set
+    let tools = if args.use_tools && mcp_client.is_some() {
+        if let Some(ref client) = mcp_client {
+            let mcp_tools = client.list_tools().await;
+            if !mcp_tools.is_empty() {
+                println!("{}", format!("Available MCP tools: {}", mcp_tools.len()).cyan());
+                Some(mcp::tools::format_tools_for_llm(&mcp_tools))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let request_body = RequestBody {
         model: final_model.clone(),
         messages: messages.clone(),
         stream: true,
         plugins,
         reasoning: config.reasoning,
+        tools,
     };
 
     if config.verbose {
@@ -199,7 +256,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         session.messages = messages;
         session.messages.push(Message {
             role: "assistant".to_string(),
-            content: assistant_response,
+            content: Some(assistant_response),
+            tool_calls: None,
+            tool_call_id: None,
         });
         session.last_updated = chrono::Local::now();
 
@@ -211,6 +270,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
         }
+    }
+
+    // Cleanup MCP servers on exit
+    if let Some(client) = mcp_client {
+        let _ = client.shutdown().await;
     }
 
     Ok(())

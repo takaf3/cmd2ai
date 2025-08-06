@@ -12,6 +12,7 @@ A fast command-line tool that pipes your terminal commands to AI models via the 
 - ✅ Support for custom models and system prompts
 - ✅ Clean citation display for web search results
 - ✅ Reasoning token support for enhanced AI model decision making
+- ✅ MCP (Model Context Protocol) tool integration for extended AI capabilities
 
 ## Prerequisites
 
@@ -122,6 +123,24 @@ Disable web search:
 ./ai --no-search "What is 2+2?"
 ```
 
+### MCP Tool Integration
+
+Connect to MCP servers and enable tool usage:
+```bash
+# Connect to filesystem MCP server
+./ai --mcp-server "fs:npx:-y,@modelcontextprotocol/server-filesystem,/tmp" --use-tools "List files in /tmp"
+
+# Connect to multiple MCP servers
+./ai --mcp-server "fs:npx:-y,@modelcontextprotocol/server-filesystem,/home" \
+     --mcp-server "time:npx:-y,@modelcontextprotocol/server-time" \
+     --use-tools "What time is it and what files are in my home directory?"
+```
+
+MCP server format: `name:command:arg1,arg2,...`
+- `name`: Server identifier (e.g., "fs", "time")
+- `command`: Command to launch the server (e.g., "npx")
+- `args`: Comma-separated arguments (optional)
+
 ### Reasoning Tokens
 
 For models that support it, you can enable reasoning tokens to see the AI's step-by-step thinking process:
@@ -195,6 +214,8 @@ Command-line arguments always take precedence over environment variables, allowi
 - `-n, --new` - Start a new conversation
 - `-c, --continue` - Continue previous conversation even if expired
 - `--clear` - Clear all conversation history
+- `--mcp-server` - Connect to MCP server (format: name:command:arg1,arg2,...)
+- `--use-tools` - Enable MCP tool usage in AI responses
 - `--reasoning-effort` - Set reasoning effort level (high, medium, low)
 - `--reasoning-max-tokens` - Set maximum tokens for reasoning
 - `--reasoning-exclude` - Use reasoning but exclude from response

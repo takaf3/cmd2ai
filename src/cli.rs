@@ -47,6 +47,18 @@ pub struct Args {
     )]
     pub reasoning_enabled: bool,
 
+    #[arg(
+        long = "mcp-server",
+        help = "Connect to MCP server (format: name:command:arg1,arg2,...)"
+    )]
+    pub mcp_servers: Vec<String>,
+
+    #[arg(
+        long = "use-tools",
+        help = "Enable MCP tool usage in AI responses"
+    )]
+    pub use_tools: bool,
+
     #[arg(help = "Command to send to AI")]
     pub command: Vec<String>,
 }

@@ -50,13 +50,14 @@ cargo check
 ## Architecture & Key Components
 
 ### Core Application Structure
-The entire application logic is contained in `src/main.rs` (~1000 lines), implementing:
+The application implements:
 
 1. **Command-line Interface** - Using clap with structured CLI arguments
 2. **Streaming Response Handler** - Server-Sent Events (SSE) processing with custom code buffer
 3. **Web Search Intelligence** - Automatic detection based on keywords with manual override flags
 4. **Syntax Highlighting** - Real-time syntax highlighting for code blocks using syntect library
 5. **Reasoning Token Support** - Display AI model's step-by-step reasoning process
+6. **MCP Client** - Model Context Protocol client for tool integration
 
 ### Key Implementation Details
 
@@ -76,6 +77,13 @@ The entire application logic is contained in `src/main.rs` (~1000 lines), implem
 - `exclude`: Allows using reasoning internally without displaying it
 - `enabled`: Enables reasoning with default parameters
 Reasoning tokens are displayed in a distinct formatted block during streaming.
+
+**MCP Client**: The `McpClient` in `src/mcp/` implements:
+- JSON-RPC 2.0 protocol communication with MCP servers
+- Dynamic tool discovery via `tools/list` requests
+- Tool execution through `tools/call` with parameter validation
+- Support for multiple concurrent MCP server connections
+- Automatic server lifecycle management (initialization and shutdown)
 
 ### Environment Configuration
 Required:
