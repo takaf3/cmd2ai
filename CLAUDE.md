@@ -35,6 +35,23 @@ make install PREFIX=/usr/local
 make uninstall
 ```
 
+### MCP Tool Usage
+```bash
+# Connect to MCP server and use tools
+ai --mcp-server "name:command:arg1,arg2" --use-tools "Your request"
+
+# Example with filesystem MCP server
+ai --mcp-server "fs:npx:-y,@modelcontextprotocol/server-filesystem,/tmp" --use-tools "List files in /tmp"
+
+# Example with Arc browser control
+ai --mcp-server "arc:node:/path/to/arc-control/server/index.js" --use-tools "Open github.com"
+
+# Multiple MCP servers
+ai --mcp-server "fs:npx:-y,@modelcontextprotocol/server-filesystem,." \
+   --mcp-server "time:npx:-y,@modelcontextprotocol/server-time" \
+   --use-tools "What time is it and what files are here?"
+```
+
 ### Code Quality
 ```bash
 # Format code
@@ -79,11 +96,13 @@ The application implements:
 Reasoning tokens are displayed in a distinct formatted block during streaming.
 
 **MCP Client**: The `McpClient` in `src/mcp/` implements:
-- JSON-RPC 2.0 protocol communication with MCP servers
+- JSON-RPC 2.0 protocol communication with MCP servers via stdio
 - Dynamic tool discovery via `tools/list` requests
 - Tool execution through `tools/call` with parameter validation
 - Support for multiple concurrent MCP server connections
 - Automatic server lifecycle management (initialization and shutdown)
+- Non-streaming mode when tools are available for proper tool call handling
+- Automatic parsing and execution of tool calls from AI model responses
 
 ### Environment Configuration
 Required:
@@ -109,12 +128,13 @@ Command-line arguments always take precedence over environment variables.
 ## Development Patterns
 
 When modifying this codebase:
-1. Maintain the single-file architecture unless complexity demands refactoring
-2. Preserve streaming behavior - avoid buffering entire responses
+1. Main application logic is in `src/main.rs`, with modular components in separate files
+2. Preserve streaming behavior except when tool usage requires full responses
 3. Test syntax highlighting with various programming languages and edge cases
 4. Ensure color output works across different terminal emulators
 5. Keep dependencies minimal - each addition should be justified
 6. The syntect library provides robust syntax highlighting but adds to binary size
+7. MCP tool calls automatically switch to non-streaming mode for proper handling
 
 ## Testing Approach
 
@@ -123,3 +143,6 @@ Currently no automated tests exist. When adding features:
 2. Verify markdown rendering with complex documents
 3. Test web search detection logic with various prompts
 4. Ensure proper error handling for API failures and network issues
+5. Test MCP server connections with various server implementations
+6. Verify tool discovery and execution with different MCP servers
+7. Test tool call parsing and error handling in non-streaming mode
