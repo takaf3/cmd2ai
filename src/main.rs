@@ -16,7 +16,7 @@ use tokio::time::{timeout, Duration};
 use cli::Args;
 use config::Config;
 use highlight::CodeBuffer;
-use mcp::{McpClient, McpToolCall};
+use mcp::McpClient;
 use models::{Citation, Message, RequestBody, StreamResponse};
 use session::{
     clear_all_sessions, create_new_session, find_recent_session, save_session,
@@ -148,10 +148,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         
         // Connect to servers if any were specified or detected
         if !servers_to_connect.is_empty() {
-            let client = McpClient::new();
+            let client = McpClient::new(config.verbose);
             
             for (server_name, command, server_args, env_vars) in servers_to_connect {
-                println!("{}", format!("Connecting to MCP server '{}'...", server_name).cyan());
+                if config.verbose {
+                    println!("{}", format!("Connecting to MCP server '{}'...", server_name).cyan());
+                }
                 
                 // Set environment variables for this server
                 for (key, value) in env_vars {
@@ -244,7 +246,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(ref client) = mcp_client {
             let mcp_tools = client.list_tools().await;
             if !mcp_tools.is_empty() {
-                println!("{}", format!("Available MCP tools: {}", mcp_tools.len()).cyan());
+                if config.verbose {
+                    println!("{}", format!("Available MCP tools: {}", mcp_tools.len()).cyan());
+                }
                 Some(mcp::tools::format_tools_for_llm(&mcp_tools))
             } else {
                 None
@@ -323,11 +327,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(message) = first_choice.get("message") {
                     // Check if there are tool calls
                     if let Some(tool_calls) = message.get("tool_calls").and_then(|tc| tc.as_array()) {
-                        println!("{}", "Executing tools...".cyan());
+                        if config.verbose {
+                            println!("{}", "Executing tools...".cyan());
+                        }
                         
                         // Execute each tool call
                         for tool_call in tool_calls {
-                            if let (Some(id), Some(function)) = (
+                            if let (Some(_id), Some(function)) = (
                                 tool_call.get("id").and_then(|i| i.as_str()),
                                 tool_call.get("function")
                             ) {
@@ -335,7 +341,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     function.get("name").and_then(|n| n.as_str()),
                                     function.get("arguments").and_then(|a| a.as_str())
                                 ) {
-                                    println!("{}", format!("Calling tool: {}", name).yellow());
+                                    // Always show when we're calling a tool (even in non-verbose)
+                                    println!("{}", format!("Calling tool: {}...", name).cyan());
                                     
                                     // Parse arguments
                                     if let Ok(arguments) = serde_json::from_str::<serde_json::Value>(arguments_str) {
@@ -348,7 +355,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             
                                             match client.call_tool(&tool_call).await {
                                                 Ok(result) => {
-                                                    println!("{}", "Tool executed successfully!".green());
+                                                    // Don't show "Tool executed successfully!" - just show the result
                                                     // Format result for display
                                                     if let Some(content) = result.content.first() {
                                                         println!("{}", content.text);

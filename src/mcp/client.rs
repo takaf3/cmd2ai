@@ -12,6 +12,7 @@ use super::types::{
 pub struct McpClient {
     servers: Arc<RwLock<HashMap<String, McpServer>>>,
     tools: Arc<RwLock<HashMap<String, (String, McpTool)>>>, // tool_name -> (server_name, tool)
+    verbose: bool,
 }
 
 struct McpServer {
@@ -20,10 +21,11 @@ struct McpServer {
 }
 
 impl McpClient {
-    pub fn new() -> Self {
+    pub fn new(verbose: bool) -> Self {
         Self {
             servers: Arc::new(RwLock::new(HashMap::new())),
             tools: Arc::new(RwLock::new(HashMap::new())),
+            verbose,
         }
     }
 
@@ -62,10 +64,12 @@ impl McpClient {
         let response = self.send_request(&mut server, "initialize", Some(init_params))?;
         let init_result: InitializeResult = serde_json::from_value(response)?;
         
-        println!(
-            "Connected to MCP server: {} v{}",
-            init_result.server_info.name, init_result.server_info.version
-        );
+        if self.verbose {
+            println!(
+                "Connected to MCP server: {} v{}",
+                init_result.server_info.name, init_result.server_info.version
+            );
+        }
 
         // Send initialized notification
         self.send_notification(&mut server, "notifications/initialized", None)?;
@@ -162,7 +166,9 @@ impl McpClient {
 
         let mut tools = self.tools.write().await;
         for tool in tool_list.tools {
-            println!("  - Tool: {} - {}", tool.name, tool.description.as_ref().unwrap_or(&String::new()));
+            if self.verbose {
+                println!("  - Tool: {} - {}", tool.name, tool.description.as_ref().unwrap_or(&String::new()));
+            }
             tools.insert(
                 tool.name.clone(),
                 (server_name.to_string(), tool),
