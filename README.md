@@ -141,6 +141,37 @@ MCP server format: `name:command:arg1,arg2,...`
 - `command`: Command to launch the server (e.g., "npx")
 - `args`: Comma-separated arguments (optional)
 
+### MCP Configuration File
+
+Instead of passing MCP servers via command line, you can configure them in a JSON file:
+
+1. Initialize a config file with examples:
+```bash
+./ai --config-init
+```
+
+This creates `.cmd2ai.json` with example MCP server configurations.
+
+2. Use auto-tools to automatically detect and use appropriate MCP servers:
+```bash
+./ai --auto-tools "What time is it?"
+# Automatically detects and connects to the time MCP server
+
+./ai --auto-tools "List files in my home directory" 
+# Automatically detects and connects to the filesystem MCP server
+```
+
+The config file supports:
+- Multiple MCP server definitions
+- Auto-activation keywords for smart server selection
+- Environment variable expansion (e.g., `${GITHUB_TOKEN}`)
+- Per-server enable/disable flags
+- Tool selection thresholds and limits
+
+Config file locations (checked in priority order):
+1. `.cmd2ai.json` (current directory - local override)
+2. `~/.config/cmd2ai/cmd2ai.json` (global config)
+
 ### Reasoning Tokens
 
 For models that support it, you can enable reasoning tokens to see the AI's step-by-step thinking process:

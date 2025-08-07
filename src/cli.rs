@@ -59,6 +59,18 @@ pub struct Args {
     )]
     pub use_tools: bool,
 
+    #[arg(
+        long = "auto-tools",
+        help = "Automatically detect and use appropriate MCP tools based on query"
+    )]
+    pub auto_tools: bool,
+
+    #[arg(
+        long = "config-init",
+        help = "Initialize a config file with example MCP servers"
+    )]
+    pub config_init: bool,
+
     #[arg(help = "Command to send to AI")]
     pub command: Vec<String>,
 }

@@ -4,28 +4,34 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-cmd2ai is a Rust CLI tool that pipes terminal commands to AI models via the OpenRouter API, providing AI-powered command-line assistance with web search capabilities and syntax-highlighted code output.
+cmd2ai is a Rust CLI tool that pipes terminal commands to AI models via the OpenRouter API, providing AI-powered command-line assistance with web search capabilities, syntax-highlighted code output, and MCP (Model Context Protocol) tool integration.
 
 ## Development Commands
 
-### Building the Project
+### Building and Running
 ```bash
-# Debug build
-cargo build
+# Debug build (use --bin ai since there are multiple binaries)
+cargo build --bin ai
 
 # Release build (optimized)
 cargo build --release
 
-# Run directly
-cargo run -- "your prompt here"
+# Run directly with cargo
+cargo run --bin ai -- "your prompt here"
 
 # Run with web search
-cargo run -- -s "latest news about Rust"
+cargo run --bin ai -- -s "latest news about Rust"
+
+# Run with auto-tools (automatically detects MCP servers from config)
+cargo run --bin ai -- --auto-tools "What time is it?"
+
+# Initialize MCP config file
+cargo run --bin ai -- --config-init
 ```
 
 ### Installation
 ```bash
-# Build and install (default: ~/.local/bin)
+# Build and install to ~/.local/bin (includes ZSH widget)
 make install
 
 # Install to custom location
@@ -33,116 +39,155 @@ make install PREFIX=/usr/local
 
 # Uninstall
 make uninstall
-```
 
-### MCP Tool Usage
-```bash
-# Connect to MCP server and use tools
-ai --mcp-server "name:command:arg1,arg2" --use-tools "Your request"
+# Development build
+make dev
 
-# Example with filesystem MCP server
-ai --mcp-server "fs:npx:-y,@modelcontextprotocol/server-filesystem,/tmp" --use-tools "List files in /tmp"
-
-# Example with Arc browser control
-ai --mcp-server "arc:node:/path/to/arc-control/server/index.js" --use-tools "Open github.com"
-
-# Multiple MCP servers
-ai --mcp-server "fs:npx:-y,@modelcontextprotocol/server-filesystem,." \
-   --mcp-server "time:npx:-y,@modelcontextprotocol/server-time" \
-   --use-tools "What time is it and what files are here?"
+# Run tests (currently no tests exist)
+make test
 ```
 
 ### Code Quality
 ```bash
 # Format code
 cargo fmt
+make fmt
 
 # Run clippy linter
 cargo clippy
+make lint
 
 # Check for compilation errors
 cargo check
+make check
 ```
 
 ## Architecture & Key Components
 
-### Core Application Structure
-The application implements:
+### High-Level Architecture
 
-1. **Command-line Interface** - Using clap with structured CLI arguments
-2. **Streaming Response Handler** - Server-Sent Events (SSE) processing with custom code buffer
-3. **Web Search Intelligence** - Automatic detection based on keywords with manual override flags
-4. **Syntax Highlighting** - Real-time syntax highlighting for code blocks using syntect library
-5. **Reasoning Token Support** - Display AI model's step-by-step reasoning process
-6. **MCP Client** - Model Context Protocol client for tool integration
+The application follows a pipeline architecture for processing AI requests:
 
-### Key Implementation Details
+```
+User Input → CLI Args → Config Loading → MCP Server Detection → API Request → Stream Processing → Output
+                           ↓                    ↓
+                    Session Management    Tool Discovery & Execution
+```
 
-**Streaming Code Buffer**: The `CodeBuffer` struct handles incremental code block detection and syntax highlighting during SSE streaming. When modifying, ensure:
-- Buffer state is preserved between chunks
-- Code blocks are properly tracked with language detection
-- Incomplete code blocks are handled gracefully
-- Syntax highlighting themes are appropriate for terminal display
+**Key Architectural Decisions:**
 
-**Web Search Detection**: The `should_search()` function implements smart keyword detection. Search keywords include: "latest", "news", "current", "weather", "update", "price", "stock", "today". No-search keywords include development terms like "code", "function", "implement".
+1. **Streaming vs Non-Streaming**: The app automatically switches between streaming (for regular responses) and non-streaming (when MCP tools are available) modes. This is critical because tool calls require the complete response to parse properly.
 
-**API Integration**: Uses OpenRouter API with automatic model suffix handling (appends ":online" for web search). The streaming response parser handles SSE format with proper error recovery.
+2. **Two-Stage MCP Tool Selection**:
+   - Stage 1: Keyword-based server selection (happens before AI sees anything)
+   - Stage 2: AI-based tool selection (AI decides which specific tools to call)
+   This provides both efficiency (only connecting to relevant servers) and intelligence (AI chooses appropriate tools).
 
-**Reasoning Token Support**: The `Reasoning` struct provides configuration for AI reasoning tokens:
-- `effort`: Controls reasoning depth (high/medium/low)
-- `max_tokens`: Sets specific token limit for reasoning
-- `exclude`: Allows using reasoning internally without displaying it
-- `enabled`: Enables reasoning with default parameters
-Reasoning tokens are displayed in a distinct formatted block during streaming.
+3. **Configuration Hierarchy**: 
+   - Local `.cmd2ai.json` overrides global `~/.config/cmd2ai/cmd2ai.json`
+   - Command-line args override all config files
+   - Environment variables provide defaults
 
-**MCP Client**: The `McpClient` in `src/mcp/` implements:
-- JSON-RPC 2.0 protocol communication with MCP servers via stdio
-- Dynamic tool discovery via `tools/list` requests
-- Tool execution through `tools/call` with parameter validation
-- Support for multiple concurrent MCP server connections
-- Automatic server lifecycle management (initialization and shutdown)
-- Non-streaming mode when tools are available for proper tool call handling
-- Automatic parsing and execution of tool calls from AI model responses
+### Core Components
+
+**Main Flow (`src/main.rs`)**:
+- Handles CLI argument parsing and special commands (--clear, --config-init)
+- Manages MCP client lifecycle and server connections
+- Orchestrates streaming vs non-streaming API calls
+- Processes tool calls in a loop until completion
+
+**Config System (`src/config.rs`)**:
+- `Config`: Runtime configuration from env vars and CLI args
+- `McpConfig`: MCP server definitions loaded from JSON files
+- `detect_servers_for_query()`: Keyword matching logic for auto-detection
+- Priority: CLI args > Local config > Global config > Env vars
+
+**MCP Client (`src/mcp/`)**:
+- `client.rs`: Manages server processes and JSON-RPC communication
+- `tools.rs`: Formats tools for LLM and parses tool calls from responses
+- `types.rs`: Type definitions for MCP protocol
+- Critical: Each server runs as a child process with stdio communication
+
+**Streaming Handler (`src/highlight.rs`)**:
+- `CodeBuffer`: Stateful processor for detecting and highlighting code blocks during streaming
+- Handles partial code blocks across SSE chunks
+- Applies syntax highlighting in real-time using syntect
+
+**Session Management (`src/session.rs`)**:
+- Maintains conversation history in `~/.ai_sessions/`
+- Auto-continues conversations within 1-hour window
+- Trims history to stay within token limits
+
+### Critical Implementation Details
+
+**Web Search Detection (`src/search.rs`)**:
+- Keywords that trigger search: "latest", "news", "current", "weather", "update", "price", "stock", "today"
+- Keywords that prevent search: "code", "function", "implement", "debug", "error", "bug"
+- Model name gets ":online" suffix when web search is enabled
+
+**MCP Configuration (`config.example.json`)**:
+- `auto_activate_keywords`: Must match with sufficient score (default 0.3 threshold)
+- `enabled`: Server-level flag to disable without removing configuration
+- Environment variables use `${VAR_NAME}` syntax for expansion
+
+**Tool Call Processing**:
+When tools are available, the main loop in `main.rs`:
+1. Sends non-streaming request with tool definitions
+2. Parses response for tool calls
+3. Executes each tool via MCP client
+4. Sends results back to AI
+5. Repeats until no more tool calls
+
+**Session Files**:
+- Location: `~/.ai_sessions/session_*.json`
+- Format: JSON with messages array and metadata
+- Auto-cleanup: Files older than 30 days are deleted
+- Token limit: Automatically trims older messages to stay under limits
 
 ### Environment Configuration
+
 Required:
 - `OPENROUTER_API_KEY` - API authentication
 
 Optional:
 - `AI_MODEL` - Default: "openai/gpt-4o-mini"
-- `AI_SYSTEM_PROMPT` - Custom system instructions
+- `AI_SYSTEM_PROMPT` - Custom system instructions  
 - `AI_WEB_SEARCH_MAX_RESULTS` - Range: 1-10, default: 5
 - `AI_VERBOSE` - Set to "true" for debug logging
-- `AI_STREAM_TIMEOUT` - Timeout in seconds for streaming responses, default: 30
-- `AI_REASONING_ENABLED` - Enable reasoning tokens ("true", "1", or "yes")
-- `AI_REASONING_EFFORT` - Set reasoning effort level ("high", "medium", or "low")
-- `AI_REASONING_MAX_TOKENS` - Maximum tokens for reasoning (numeric value)
-- `AI_REASONING_EXCLUDE` - Use reasoning but exclude from output ("true", "1", or "yes")
+- `AI_STREAM_TIMEOUT` - Timeout in seconds, default: 30
+- `AI_REASONING_ENABLED` - Enable reasoning tokens
+- `AI_REASONING_EFFORT` - "high", "medium", or "low"
+- `AI_REASONING_MAX_TOKENS` - Maximum reasoning tokens
+- `AI_REASONING_EXCLUDE` - Use reasoning but hide output
 
-Command-line arguments always take precedence over environment variables.
+### MCP Server Configuration
 
-### Wrapper Scripts
-- `ai` - Bash wrapper that auto-builds if binary is missing
-- `ai-widget.zsh` - ZSH integration for capital letter command interception
+Config file locations (priority order):
+1. `.cmd2ai.json` (local override)
+2. `~/.config/cmd2ai/cmd2ai.json` (global config)
 
-## Development Patterns
+Example server configuration:
+```json
+{
+  "servers": [{
+    "name": "filesystem",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+    "auto_activate_keywords": ["file", "directory", "read", "write"],
+    "enabled": true
+  }]
+}
+```
 
-When modifying this codebase:
-1. Main application logic is in `src/main.rs`, with modular components in separate files
-2. Preserve streaming behavior except when tool usage requires full responses
-3. Test syntax highlighting with various programming languages and edge cases
-4. Ensure color output works across different terminal emulators
-5. Keep dependencies minimal - each addition should be justified
-6. The syntect library provides robust syntax highlighting but adds to binary size
-7. MCP tool calls automatically switch to non-streaming mode for proper handling
+### Common Debugging
 
-## Testing Approach
+```bash
+# Enable verbose logging to see MCP server detection
+AI_VERBOSE=true ai --auto-tools "your query"
 
-Currently no automated tests exist. When adding features:
-1. Test streaming with slow connections using throttled API responses
-2. Verify markdown rendering with complex documents
-3. Test web search detection logic with various prompts
-4. Ensure proper error handling for API failures and network issues
-5. Test MCP server connections with various server implementations
-6. Verify tool discovery and execution with different MCP servers
-7. Test tool call parsing and error handling in non-streaming mode
+# Test MCP server connection directly
+ai --mcp-server "test:echo:hello" --use-tools "test"
+
+# Check which config file is being loaded
+AI_VERBOSE=true ai --auto-tools "test" 2>&1 | grep "Available servers"
+```

@@ -43,6 +43,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Handle --config-init option
+    if args.config_init {
+        let example_config = include_str!("../config.example.json");
+        let config_path = std::path::PathBuf::from(".cmd2ai.json");
+        
+        if config_path.exists() {
+            eprintln!("{} Config file already exists at .cmd2ai.json", "Error:".red());
+            eprintln!("Use a different path or remove the existing file.");
+            process::exit(1);
+        }
+        
+        match std::fs::write(&config_path, example_config) {
+            Ok(_) => {
+                println!("{}", "Config file created at .cmd2ai.json".green());
+                println!("Edit this file to configure your MCP servers.");
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("{} Failed to create config file: {}", "Error:".red(), e);
+                process::exit(1);
+            }
+        }
+    }
+
     if args.command.is_empty() {
         print_usage();
         process::exit(1);
@@ -59,10 +83,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // Initialize MCP client if servers are specified
-    let mcp_client = if !args.mcp_servers.is_empty() {
-        let client = McpClient::new();
+    // Initialize MCP client with servers from command line and/or config
+    let mcp_client = {
+        let mut servers_to_connect = Vec::new();
         
+        // First, add servers from command line arguments
         for server_spec in &args.mcp_servers {
             let parts: Vec<&str> = server_spec.splitn(3, ':').collect();
             if parts.len() < 2 {
@@ -71,8 +96,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 process::exit(1);
             }
             
-            let server_name = parts[0];
-            let command = parts[1];
+            let server_name = parts[0].to_string();
+            let command = parts[1].to_string();
             let args_str = if parts.len() > 2 { parts[2] } else { "" };
             let server_args: Vec<String> = if !args_str.is_empty() {
                 args_str.split(',').map(|s| s.to_string()).collect()
@@ -80,16 +105,63 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 vec![]
             };
             
-            println!("{}", format!("Connecting to MCP server '{}'...", server_name).cyan());
-            if let Err(e) = client.connect_server(server_name, command, server_args).await {
-                eprintln!("{} Failed to connect to MCP server '{}': {}", "Error:".red(), server_name, e);
-                process::exit(1);
+            servers_to_connect.push((server_name, command, server_args, std::collections::HashMap::new()));
+        }
+        
+        // Auto-detect servers from config if auto_tools is set or use_tools is set with no explicit servers
+        if (args.auto_tools || (args.use_tools && servers_to_connect.is_empty())) && config.mcp_config.settings.auto_detect {
+            if config.verbose {
+                eprintln!("{}", format!("[AI] Checking for MCP servers to auto-detect for query: \"{}\"", command).dimmed());
+                eprintln!("{}", format!("[AI] Available servers in config: {}", config.mcp_config.servers.len()).dimmed());
+            }
+            
+            let detected_servers = config.mcp_config.detect_servers_for_query(&command);
+            
+            if config.verbose {
+                if detected_servers.is_empty() {
+                    eprintln!("{}", "[AI] No MCP servers matched the query".dimmed());
+                } else {
+                    eprintln!("{}", format!("[AI] Auto-detected {} MCP server(s) based on query", detected_servers.len()).dimmed());
+                }
+            }
+            
+            for server in detected_servers {
+                if config.verbose {
+                    eprintln!("{}", format!("[AI] - {} ({})", server.name, server.description).dimmed());
+                }
+                
+                let env_vars = config::McpConfig::expand_env_vars(&server.env);
+                servers_to_connect.push((
+                    server.name.clone(),
+                    server.command.clone(),
+                    server.args.clone(),
+                    env_vars,
+                ));
             }
         }
         
-        Some(client)
-    } else {
-        None
+        // Connect to servers if any were specified or detected
+        if !servers_to_connect.is_empty() {
+            let client = McpClient::new();
+            
+            for (server_name, command, server_args, env_vars) in servers_to_connect {
+                println!("{}", format!("Connecting to MCP server '{}'...", server_name).cyan());
+                
+                // Set environment variables for this server
+                for (key, value) in env_vars {
+                    std::env::set_var(key, value);
+                }
+                
+                if let Err(e) = client.connect_server(&server_name, &command, server_args).await {
+                    eprintln!("{} Failed to connect to MCP server '{}': {}", "Error:".red(), server_name, e);
+                    process::exit(1);
+                }
+            }
+            
+            Some(client)
+        } else {
+            None
+        }
     };
 
     let use_web_search = should_use_web_search(&command, args.force_search, args.no_search);
@@ -179,8 +251,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Get available tools if MCP is enabled and use_tools flag is set
-    let tools = if args.use_tools && mcp_client.is_some() {
+    // Get available tools if MCP is enabled and use_tools or auto_tools flag is set
+    let tools = if (args.use_tools || args.auto_tools) && mcp_client.is_some() {
         if let Some(ref client) = mcp_client {
             let mcp_tools = client.list_tools().await;
             if !mcp_tools.is_empty() {
