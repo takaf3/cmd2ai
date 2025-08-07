@@ -225,7 +225,6 @@ Command-line arguments always take precedence over environment variables, allowi
 - `OPENROUTER_API_KEY` - Required. Your OpenRouter API key
 - `AI_MODEL` - Optional. AI model to use (default: "openai/gpt-4.1-mini")
 - `AI_SYSTEM_PROMPT` - Optional. System prompt to prepend to messages
-- `AI_WEB_SEARCH_MAX_RESULTS` - Optional. Maximum web search results (default: 5, range: 1-10)
 - `AI_STREAM_TIMEOUT` - Optional. Timeout in seconds for streaming responses (default: 30)
 - `AI_VERBOSE` - Optional. Enable debug logging when set to "true"
 - `AI_REASONING_ENABLED` - Optional. Enable reasoning tokens ("true", "1", or "yes")

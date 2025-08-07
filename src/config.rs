@@ -11,7 +11,6 @@ pub struct Config {
     pub api_key: String,
     pub model: String,
     pub system_prompt: Option<String>,
-    pub web_search_max_results: u32,
     pub stream_timeout: u64,
     pub verbose: bool,
     pub reasoning: Option<Reasoning>,
@@ -98,13 +97,6 @@ impl Config {
         // Get system prompt
         let system_prompt = env::var("AI_SYSTEM_PROMPT").ok();
 
-        // Get web search max results
-        let web_search_max_results = env::var("AI_WEB_SEARCH_MAX_RESULTS")
-            .ok()
-            .and_then(|s| s.parse::<u32>().ok())
-            .unwrap_or(5)
-            .clamp(1, 10);
-
         // Get stream timeout
         let stream_timeout = env::var("AI_STREAM_TIMEOUT")
             .ok()
@@ -124,7 +116,6 @@ impl Config {
             api_key,
             model,
             system_prompt,
-            web_search_max_results,
             stream_timeout,
             verbose,
             reasoning,

@@ -120,10 +120,10 @@ User Input → CLI Args → Config Loading → MCP Server Detection → API Requ
 
 ### Critical Implementation Details
 
-**Web Search Detection (`src/search.rs`)**:
-- Keywords that trigger search: "latest", "news", "current", "weather", "update", "price", "stock", "today"
-- Keywords that prevent search: "code", "function", "implement", "debug", "error", "bug"
-- Model name gets ":online" suffix when web search is enabled
+**Web Search via MCP Tools**:
+- Web search is now handled through MCP tools (like Gemini) instead of built-in `:online` suffix
+- Configure MCP servers in config file for web search capabilities
+- The AI intelligently decides when to use search tools based on the query
 
 **MCP Configuration (`config.example.json`)**:
 - `auto_activate_keywords`: Must match with sufficient score (default 0.3 threshold)
@@ -152,7 +152,6 @@ Required:
 Optional:
 - `AI_MODEL` - Default: "openai/gpt-4o-mini"
 - `AI_SYSTEM_PROMPT` - Custom system instructions  
-- `AI_WEB_SEARCH_MAX_RESULTS` - Range: 1-10, default: 5
 - `AI_VERBOSE` - Set to "true" for debug logging
 - `AI_STREAM_TIMEOUT` - Timeout in seconds, default: 30
 - `AI_REASONING_ENABLED` - Enable reasoning tokens
