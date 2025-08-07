@@ -7,12 +7,11 @@ A fast command-line tool that pipes your terminal commands to AI models via the 
 - ✅ Streaming AI responses using Server-Sent Events (SSE)
 - ✅ Syntax highlighting for code blocks
 - ✅ Conversation memory with automatic continuation
-- ✅ Automatic web search detection
-- ✅ Manual web search control with flags
 - ✅ Support for custom models and system prompts
-- ✅ Clean citation display for web search results
 - ✅ Reasoning token support for enhanced AI model decision making
 - ✅ MCP (Model Context Protocol) tool integration for extended AI capabilities
+- ✅ Automatic MCP server detection based on query content
+- ✅ Web search via MCP tools (e.g., Gemini) instead of built-in :online suffix
 
 ## Prerequisites
 
@@ -253,12 +252,11 @@ Command-line arguments always take precedence over environment variables, allowi
 - `--reasoning-enabled` - Enable reasoning with default parameters
 - `-h, --help` - Print help information
 
-## Web Search Detection
+## Web Search via MCP Tools
 
-The tool automatically detects when web search might be beneficial based on keywords:
-- Web search triggers: "latest", "news", "current", "weather", "price", etc.
-- No-search keywords: "hello", "code", "implement", "debug", etc.
-- Informational queries are evaluated based on context
+Web search is now handled through MCP tools (like Gemini) instead of the built-in `:online` model suffix. 
+Configure MCP servers in your config file to enable intelligent web search capabilities that can be automatically 
+activated based on your query content.
 
 ## Conversation Memory
 

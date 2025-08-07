@@ -3,7 +3,6 @@ mod config;
 mod highlight;
 mod mcp;
 mod models;
-mod search;
 mod session;
 
 use clap::Parser;
@@ -18,8 +17,7 @@ use cli::Args;
 use config::Config;
 use highlight::CodeBuffer;
 use mcp::{McpClient, McpToolCall};
-use models::{Citation, Message, RequestBody, StreamResponse, WebPlugin};
-use search::should_use_web_search;
+use models::{Citation, Message, RequestBody, StreamResponse};
 use session::{
     clear_all_sessions, create_new_session, find_recent_session, save_session,
     trim_conversation_history,
@@ -109,23 +107,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         
         // Auto-detect servers from config if auto_tools is set or use_tools is set with no explicit servers
-        if (args.auto_tools || (args.use_tools && servers_to_connect.is_empty())) && config.mcp_config.settings.auto_detect {
+        if args.auto_tools || (args.use_tools && servers_to_connect.is_empty()) {
             if config.verbose {
-                eprintln!("{}", format!("[AI] Checking for MCP servers to auto-detect for query: \"{}\"", command).dimmed());
+                eprintln!("{}", format!("[AI] Loading MCP servers from config (auto-tools mode)").dimmed());
                 eprintln!("{}", format!("[AI] Available servers in config: {}", config.mcp_config.servers.len()).dimmed());
             }
             
-            let detected_servers = config.mcp_config.detect_servers_for_query(&command);
+            // When auto-tools is used, connect to ALL enabled servers
+            // Let the AI decide which tools to use based on the query
+            let servers_to_use = if args.auto_tools {
+                // Auto-tools: Use ALL enabled servers, let AI decide
+                config.mcp_config.get_enabled_servers()
+            } else {
+                // Use-tools without explicit servers: Try keyword detection
+                config.mcp_config.detect_servers_for_query(&command)
+            };
             
             if config.verbose {
-                if detected_servers.is_empty() {
-                    eprintln!("{}", "[AI] No MCP servers matched the query".dimmed());
+                if servers_to_use.is_empty() {
+                    eprintln!("{}", "[AI] No enabled MCP servers found".dimmed());
                 } else {
-                    eprintln!("{}", format!("[AI] Auto-detected {} MCP server(s) based on query", detected_servers.len()).dimmed());
+                    eprintln!("{}", format!("[AI] Connecting to {} MCP server(s)", servers_to_use.len()).dimmed());
                 }
             }
             
-            for server in detected_servers {
+            for server in servers_to_use {
                 if config.verbose {
                     eprintln!("{}", format!("[AI] - {} ({})", server.name, server.description).dimmed());
                 }
@@ -164,13 +170,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let use_web_search = should_use_web_search(&command, args.force_search, args.no_search);
-
-    let final_model = if use_web_search && !config.model.contains(":online") {
-        format!("{}:online", config.model)
-    } else {
-        config.model.clone()
-    };
+    // Web search is now handled by MCP tools (like gemini), not built-in :online suffix
+    let final_model = config.model.clone();
 
     // Load or create session
     let mut session = if args.new_conversation {
@@ -219,19 +220,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Trim history if needed
     trim_conversation_history(&mut messages);
 
-    let plugins = if use_web_search {
-        Some(vec![WebPlugin {
-            id: "web".to_string(),
-            max_results: config.web_search_max_results,
-            search_prompt: format!(
-                "A web search was conducted on {}. Use the following web search results to answer the user's question.\n\nIMPORTANT: Do NOT include URLs or citations in your answer. Just provide a clean, natural response based on the information found. The sources will be displayed separately.",
-                Config::get_search_date()
-            ),
-        }])
-    } else {
-        None
-    };
-
     // Log reasoning configuration before moving it
     if config.verbose && config.reasoning.is_some() {
         eprintln!("{}", "[AI] Reasoning: enabled".dimmed());
@@ -275,7 +263,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         model: final_model.clone(),
         messages: messages.clone(),
         stream: use_streaming,
-        plugins,
         reasoning: config.reasoning,
         tools: tools.clone(),
     };
@@ -287,28 +274,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if config.verbose {
         eprintln!("{}", format!("[AI] Using model: {}", final_model).dimmed());
-        eprintln!(
-            "{}",
-            format!(
-                "[AI] Web search: {}",
-                if use_web_search {
-                    "enabled"
-                } else {
-                    "disabled"
-                }
-            )
-            .dimmed()
-        );
-        if use_web_search {
-            eprintln!(
-                "{}",
-                format!("[AI] Max search results: {}", config.web_search_max_results).dimmed()
-            );
-        }
     }
 
     // Make API request
+    if config.verbose {
+        eprintln!("{}", "[AI] Making API request...".dimmed());
+    }
     let response = make_api_request(&config.api_key, &request_body).await?;
+
+    if config.verbose {
+        eprintln!("{}", format!("[AI] Response status: {}", response.status()).dimmed());
+    }
 
     if !response.status().is_success() {
         let status = response.status();
@@ -390,6 +366,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         
                         "Tools executed successfully".to_string()
                     } else if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
+                        // Print the AI's response when no tools were called
+                        println!("{}", content);
                         content.to_string()
                     } else {
                         "No response content".to_string()

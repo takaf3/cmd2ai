@@ -260,10 +260,11 @@ impl McpConfig {
             return Vec::new();
         }
         
+        let enabled_servers = self.get_enabled_servers();
         let query_lower = query.to_lowercase();
         let mut scored_servers: Vec<(&ServerConfig, f64)> = Vec::new();
         
-        for server in self.get_enabled_servers() {
+        for server in enabled_servers {
             if server.auto_activate_keywords.is_empty() {
                 continue;
             }

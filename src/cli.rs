@@ -4,11 +4,6 @@ use clap::Parser;
 #[command(name = "ai")]
 #[command(about = "AI command-line tool using OpenRouter API", long_about = None)]
 pub struct Args {
-    #[arg(short = 's', long = "search", help = "Force web search")]
-    pub force_search: bool,
-
-    #[arg(long = "no-search", help = "Disable web search")]
-    pub no_search: bool,
 
     #[arg(short = 'n', long = "new", help = "Start a new conversation")]
     pub new_conversation: bool,

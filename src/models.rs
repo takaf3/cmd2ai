@@ -34,13 +34,6 @@ pub struct Session {
 }
 
 #[derive(Serialize)]
-pub struct WebPlugin {
-    pub id: String,
-    pub max_results: u32,
-    pub search_prompt: String,
-}
-
-#[derive(Serialize)]
 pub struct Reasoning {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
@@ -57,8 +50,6 @@ pub struct RequestBody {
     pub model: String,
     pub messages: Vec<Message>,
     pub stream: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub plugins: Option<Vec<WebPlugin>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<Reasoning>,
     #[serde(skip_serializing_if = "Option::is_none")]
