@@ -165,6 +165,7 @@ Optional:
 - `AI_REASONING_EFFORT` - "high", "medium", or "low"
 - `AI_REASONING_MAX_TOKENS` - Maximum reasoning tokens
 - `AI_REASONING_EXCLUDE` - Use reasoning but hide output
+- `AI_DISABLE_TOOLS` - Set to "true", "1", or "yes" to disable MCP tools (overridden by --no-tools CLI flag)
 
 ### MCP Server Configuration
 

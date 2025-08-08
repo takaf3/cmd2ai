@@ -16,6 +16,7 @@ pub struct Config {
     pub verbose: bool,
     pub reasoning: Option<Reasoning>,
     pub mcp_config: McpConfig,
+    pub disable_tools: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -125,6 +126,13 @@ impl Config {
         // Get verbose flag
         let verbose = env::var("AI_VERBOSE").unwrap_or_default() == "true";
 
+        // Get disable_tools flag - CLI arg takes precedence over env var
+        let disable_tools = args.no_tools || 
+            env::var("AI_DISABLE_TOOLS")
+                .ok()
+                .map(|v| matches!(v.to_lowercase().as_str(), "true" | "1" | "yes"))
+                .unwrap_or(false);
+
         // Build reasoning configuration from command-line arguments and environment variables
         let reasoning = Self::build_reasoning_config(args);
 
@@ -140,6 +148,7 @@ impl Config {
             verbose,
             reasoning,
             mcp_config,
+            disable_tools,
         })
     }
 
