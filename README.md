@@ -141,7 +141,7 @@ MCP server format: `name:command:arg1,arg2,...`
 
 ### Configuration
 
-cmd2ai supports comprehensive configuration through JSON files with environment variable overrides for debugging.
+cmd2ai supports comprehensive configuration through YAML files with environment variable overrides for debugging. YAML format allows inline comments for better documentation.
 
 #### Quick Setup
 
@@ -150,64 +150,70 @@ cmd2ai supports comprehensive configuration through JSON files with environment 
 ./ai --config-init
 ```
 
-2. Migrate existing environment variables to JSON config:
+2. Migrate existing environment variables to YAML config:
 ```bash
-# Migrate to global config (~/.config/cmd2ai/cmd2ai.json)
+# Migrate to global config (~/.config/cmd2ai/cmd2ai.yaml)
 ./migrate_config.sh
 
 # Or migrate to project-specific config
-./migrate_config.sh --output .cmd2ai.json
+./migrate_config.sh --output .cmd2ai.yaml
 ```
 
 #### Configuration File Structure
 
 Config file locations (checked in priority order):
-1. `.cmd2ai.json` (project-specific config)
-2. `~/.config/cmd2ai/cmd2ai.json` (global user config)
+1. `.cmd2ai.yaml` or `.cmd2ai.yml` (project-specific config)
+2. `~/.config/cmd2ai/cmd2ai.yaml` or `.cmd2ai.yml` (global user config)
+3. `.cmd2ai.json` (backward compatibility)
 
 Complete configuration example:
-```json
-{
-  "api": {
-    "endpoint": "https://openrouter.ai/api/v1",
-    "stream_timeout": 30
-  },
-  "model": {
-    "default_model": "openai/gpt-4o-mini",
-    "system_prompt": "You are a helpful assistant"
-  },
-  "session": {
-    "verbose": false
-  },
-  "reasoning": {
-    "enabled": false,
-    "effort": "low",
-    "max_tokens": 1000,
-    "exclude": false
-  },
-  "mcp": {
-    "disable_tools": false,
-    "settings": {
-      "auto_detect": true,
-      "timeout": 30
-    },
-    "servers": [
-      {
-        "name": "filesystem",
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
-        "auto_activate_keywords": ["file", "read", "write"],
-        "description": "File system operations",
-        "env": {"CUSTOM_VAR": "${ENV_VAR}"},
-        "enabled": true
-      }
-    ],
-    "tool_selection": {
-      "max_servers": 3,
-      "min_match_score": 0.3
-    }
-  }
-}
+```yaml
+# cmd2ai Configuration File
+# YAML format supports comments for better documentation!
+
+# API Configuration
+api:
+  endpoint: https://openrouter.ai/api/v1  # Custom API endpoint
+  stream_timeout: 30                       # Request timeout in seconds
+
+# Model Configuration
+model:
+  default_model: openai/gpt-5            # Default AI model
+  system_prompt: You are a helpful assistant  # System instructions
+
+# Session Configuration
+session:
+  verbose: false                          # Enable debug logging
+
+# Reasoning Configuration
+reasoning:
+  enabled: false                          # Enable reasoning tokens
+  effort: low                             # high, medium, or low
+  max_tokens: 1000                        # Max reasoning tokens
+  exclude: false                          # Hide reasoning output
+
+# MCP (Model Context Protocol) Configuration
+mcp:
+  disable_tools: false                    # Disable all MCP tools
+  
+  settings:
+    auto_detect: true                     # Auto-detect relevant servers
+    timeout: 30                           # MCP operation timeout
+  
+  # MCP Server Definitions
+  servers:
+    - name: filesystem
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+      description: File system operations
+      auto_activate_keywords: [file, read, write]
+      env:
+        CUSTOM_VAR: ${ENV_VAR}           # Environment variable expansion
+      enabled: true
+  
+  tool_selection:
+    max_servers: 3                       # Max servers to activate
+    min_match_score: 0.3                 # Min keyword match score
 ```
 
 #### Priority Order
@@ -215,17 +221,17 @@ Complete configuration example:
 Settings are resolved in this order (highest to lowest priority):
 1. **Command-line arguments** (e.g., `--api-endpoint`, `--no-tools`)
 2. **Environment variables** (e.g., `AI_MODEL`, `AI_VERBOSE`)
-3. **JSON configuration files**
+3. **YAML/JSON configuration files**
 4. **Built-in defaults**
 
 This allows you to:
-- Set your preferred defaults in JSON config
+- Set your preferred defaults in YAML config
 - Override temporarily with environment variables for debugging
 - Override for specific commands with CLI arguments
 
 #### Migration Tool
 
-The `migrate_config.sh` script helps convert existing environment variables to JSON:
+The `migrate_config.sh` script helps convert existing environment variables to YAML:
 
 ```bash
 # Show what would be migrated (dry run)
@@ -240,6 +246,7 @@ The `migrate_config.sh` script helps convert existing environment variables to J
 
 The migration tool:
 - Detects all AI_* environment variables
+- Converts them to well-formatted YAML with comments
 - Preserves existing MCP server configurations when merging
 - Creates the config directory if needed
 - Keeps sensitive data (API keys) as environment variables
@@ -310,7 +317,7 @@ Command-line arguments always take precedence over environment variables, allowi
 - `AI_REASONING_EXCLUDE` - Use reasoning but exclude from output ("true", "1", or "yes")
 - `AI_DISABLE_TOOLS` - Disable MCP tools ("true", "1", or "yes")
 
-**Note:** All settings except the API key can be configured in JSON files. Environment variables override JSON config values, which is useful for temporary changes or debugging.
+**Note:** All settings except the API key can be configured in YAML files. Environment variables override YAML config values, which is useful for temporary changes or debugging. The system also supports JSON files for backward compatibility.
 
 ## Security Considerations
 

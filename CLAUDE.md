@@ -156,53 +156,58 @@ Configuration can be set via JSON config files, environment variables, or comman
 **CLI args > Environment variables > JSON config > Defaults**
 
 #### Config File Locations (priority order)
-1. `.cmd2ai.json` (local project config)
-2. `~/.config/cmd2ai/cmd2ai.json` (global user config)
+1. `.cmd2ai.yaml` or `.cmd2ai.yml` (local project config)
+2. `~/.config/cmd2ai/cmd2ai.yaml` or `.cmd2ai.yml` (global user config)
+3. `.cmd2ai.json` (backward compatibility)
 
 #### Complete Configuration Structure
-```json
-{
-  "api": {
-    "endpoint": "https://openrouter.ai/api/v1",  // Custom API endpoint
-    "stream_timeout": 30                          // Request timeout in seconds
-  },
-  "model": {
-    "default_model": "openai/gpt-4o-mini",       // Default AI model
-    "system_prompt": "Custom instructions"        // System prompt
-  },
-  "session": {
-    "verbose": false                              // Enable debug logging
-  },
-  "reasoning": {
-    "enabled": false,                             // Enable reasoning tokens
-    "effort": "low",                              // "high", "medium", or "low"
-    "max_tokens": 1000,                          // Max reasoning tokens
-    "exclude": false                              // Hide reasoning output
-  },
-  "mcp": {
-    "disable_tools": false,                       // Disable all MCP tools
-    "settings": {
-      "auto_detect": true,                        // Auto-detect tools
-      "timeout": 30                                // MCP timeout
-    },
-    "servers": [                                  // MCP server configs
-      {
-        "name": "filesystem",
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
-        "auto_activate_keywords": ["file", "read", "write"],
-        "description": "File system operations",
-        "env": {"CUSTOM_VAR": "${ENV_VAR}"},     // Env var expansion
-        "enabled": true
-      }
-    ],
-    "tool_selection": {
-      "max_servers": 3,                          // Max servers to activate
-      "min_match_score": 0.3,                    // Min keyword match score
-      "prompt_before_activation": false          // Prompt before using tools
-    }
-  }
-}
+```yaml
+# cmd2ai Configuration
+# YAML format supports inline comments!
+
+# API Configuration
+api:
+  endpoint: https://openrouter.ai/api/v1  # Custom API endpoint
+  stream_timeout: 30                       # Request timeout in seconds
+
+# Model Configuration  
+model:
+  default_model: openai/gpt-5            # Default AI model
+  system_prompt: Custom instructions       # System prompt
+
+# Session Configuration
+session:
+  verbose: false                          # Enable debug logging
+
+# Reasoning Configuration
+reasoning:
+  enabled: false                          # Enable reasoning tokens
+  effort: low                             # high, medium, or low
+  max_tokens: 1000                        # Max reasoning tokens
+  exclude: false                          # Hide reasoning output
+
+# MCP Configuration
+mcp:
+  disable_tools: false                    # Disable all MCP tools
+  
+  settings:
+    auto_detect: true                     # Auto-detect tools
+    timeout: 30                           # MCP timeout
+  
+  servers:                                # MCP server configs
+    - name: filesystem
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+      auto_activate_keywords: [file, read, write]
+      description: File system operations
+      env: 
+        CUSTOM_VAR: ${ENV_VAR}           # Env var expansion
+      enabled: true
+  
+  tool_selection:
+    max_servers: 3                       # Max servers to activate
+    min_match_score: 0.3                 # Min keyword match score
+    prompt_before_activation: false      # Prompt before using tools
 ```
 
 #### Environment Variable Overrides
@@ -230,11 +235,11 @@ A migration script is provided to convert existing environment variables to JSON
 # Show current env vars and generate config (dry run)
 ./migrate_config.sh --dry-run
 
-# Write config to default location (~/.config/cmd2ai/cmd2ai.json)
+# Write config to default location (~/.config/cmd2ai/cmd2ai.yaml)
 ./migrate_config.sh
 
 # Write to current directory (for project-specific config)
-./migrate_config.sh --output .cmd2ai.json
+./migrate_config.sh --output .cmd2ai.yaml
 
 # Merge with existing config
 ./migrate_config.sh --merge
@@ -245,7 +250,7 @@ A migration script is provided to convert existing environment variables to JSON
 
 The migration script will:
 - Detect all AI_* environment variables
-- Convert them to appropriate JSON config structure
+- Convert them to appropriate YAML config structure with comments
 - Preserve existing MCP server configurations when using --merge
 - Keep sensitive data (API keys) as environment variables
 

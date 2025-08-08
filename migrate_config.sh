@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# migrate_config.sh - Migrate environment variables to cmd2ai JSON configuration
-# Usage: ./migrate_config.sh [--output FILE] [--merge] [--dry-run] [--force]
+# migrate_config_yaml.sh - Migrate environment variables to cmd2ai YAML configuration
+# Usage: ./migrate_config_yaml.sh [--output FILE] [--merge] [--dry-run] [--force]
 
 set -e
 
 # Default values
-OUTPUT_FILE="$HOME/.config/cmd2ai/cmd2ai.json"
+OUTPUT_FILE="$HOME/.config/cmd2ai/cmd2ai.yaml"
 MERGE=false
 DRY_RUN=false
 FORCE=false
@@ -33,10 +33,10 @@ while [[ $# -gt 0 ]]; do
         -h|--help)
             echo "Usage: $0 [OPTIONS]"
             echo ""
-            echo "Migrate cmd2ai environment variables to JSON configuration"
+            echo "Migrate cmd2ai environment variables to YAML configuration"
             echo ""
             echo "Options:"
-            echo "  -o, --output FILE   Output file path (default: ~/.config/cmd2ai/cmd2ai.json)"
+            echo "  -o, --output FILE   Output file path (default: ~/.config/cmd2ai/cmd2ai.yaml)"
             echo "  --merge            Merge with existing config file if it exists"
             echo "  --dry-run          Print the config without writing to file"
             echo "  --force            Overwrite existing config without prompting"
@@ -52,13 +52,13 @@ done
 
 # Function to convert boolean env vars
 convert_bool() {
-    local value=$(echo "$1" | tr '[:upper:]' '[:lower:]')  # Convert to lowercase
+    local value=$(echo "$1" | tr '[:upper:]' '[:lower:]')
     if [[ "$value" == "true" || "$value" == "1" || "$value" == "yes" ]]; then
         echo "true"
     elif [[ "$value" == "false" || "$value" == "0" || "$value" == "no" ]]; then
         echo "false"
     else
-        echo "null"
+        echo ""
     fi
 }
 
@@ -97,189 +97,211 @@ for var in $AI_VARS; do
 done
 echo ""
 
-# Start building JSON config
-JSON_CONFIG='{'
-FIRST_SECTION=true
+# Start building YAML config
+YAML_CONFIG="# cmd2ai Configuration File
+# Generated from environment variables
+# $(date)
+"
 
 # API configuration
 if [[ -n "${AI_API_ENDPOINT:-}" ]] || [[ -n "${AI_STREAM_TIMEOUT:-}" ]]; then
-    [[ "$FIRST_SECTION" == false ]] && JSON_CONFIG+=','
-    JSON_CONFIG+='"api":{'
-    FIRST_FIELD=true
+    YAML_CONFIG+="
+# API Configuration
+api:"
     
     if [[ -n "${AI_API_ENDPOINT:-}" ]]; then
-        JSON_CONFIG+='"endpoint":"'$AI_API_ENDPOINT'"'
-        FIRST_FIELD=false
+        YAML_CONFIG+="
+  endpoint: \"${AI_API_ENDPOINT}\""
     fi
     
     if [[ -n "${AI_STREAM_TIMEOUT:-}" ]]; then
-        [[ "$FIRST_FIELD" == false ]] && JSON_CONFIG+=','
-        JSON_CONFIG+='"stream_timeout":'$AI_STREAM_TIMEOUT
+        YAML_CONFIG+="
+  stream_timeout: ${AI_STREAM_TIMEOUT}"
     fi
-    
-    JSON_CONFIG+='}'
-    FIRST_SECTION=false
 fi
 
 # Model configuration
 if [[ -n "${AI_MODEL:-}" ]] || [[ -n "${AI_SYSTEM_PROMPT:-}" ]]; then
-    [[ "$FIRST_SECTION" == false ]] && JSON_CONFIG+=','
-    JSON_CONFIG+='"model":{'
-    FIRST_FIELD=true
+    YAML_CONFIG+="
+
+# Model Configuration
+model:"
     
     if [[ -n "${AI_MODEL:-}" ]]; then
-        JSON_CONFIG+='"default_model":"'$AI_MODEL'"'
-        FIRST_FIELD=false
+        YAML_CONFIG+="
+  default_model: ${AI_MODEL}"
     fi
     
     if [[ -n "${AI_SYSTEM_PROMPT:-}" ]]; then
-        [[ "$FIRST_FIELD" == false ]] && JSON_CONFIG+=','
         # Escape quotes in system prompt
         ESCAPED_PROMPT=$(echo "$AI_SYSTEM_PROMPT" | sed 's/"/\\"/g')
-        JSON_CONFIG+='"system_prompt":"'$ESCAPED_PROMPT'"'
+        YAML_CONFIG+="
+  system_prompt: \"${ESCAPED_PROMPT}\""
     fi
-    
-    JSON_CONFIG+='}'
-    FIRST_SECTION=false
 fi
 
 # Session configuration
 if [[ -n "${AI_VERBOSE:-}" ]]; then
-    [[ "$FIRST_SECTION" == false ]] && JSON_CONFIG+=','
     VERBOSE_BOOL=$(convert_bool "$AI_VERBOSE")
-    if [[ "$VERBOSE_BOOL" != "null" ]]; then
-        JSON_CONFIG+='"session":{"verbose":'$VERBOSE_BOOL'}'
-        FIRST_SECTION=false
+    if [[ -n "$VERBOSE_BOOL" ]]; then
+        YAML_CONFIG+="
+
+# Session Configuration
+session:
+  verbose: ${VERBOSE_BOOL}"
     fi
 fi
 
 # Reasoning configuration
 if [[ -n "${AI_REASONING_ENABLED:-}" ]] || [[ -n "${AI_REASONING_EFFORT:-}" ]] || \
    [[ -n "${AI_REASONING_MAX_TOKENS:-}" ]] || [[ -n "${AI_REASONING_EXCLUDE:-}" ]]; then
-    [[ "$FIRST_SECTION" == false ]] && JSON_CONFIG+=','
-    JSON_CONFIG+='"reasoning":{'
-    FIRST_FIELD=true
+    YAML_CONFIG+="
+
+# Reasoning Configuration
+reasoning:"
     
     if [[ -n "${AI_REASONING_ENABLED:-}" ]]; then
         ENABLED_BOOL=$(convert_bool "$AI_REASONING_ENABLED")
-        if [[ "$ENABLED_BOOL" != "null" ]]; then
-            JSON_CONFIG+='"enabled":'$ENABLED_BOOL
-            FIRST_FIELD=false
+        if [[ -n "$ENABLED_BOOL" ]]; then
+            YAML_CONFIG+="
+  enabled: ${ENABLED_BOOL}"
         fi
     fi
     
     if [[ -n "${AI_REASONING_EFFORT:-}" ]]; then
         EFFORT_LOWER=$(echo "$AI_REASONING_EFFORT" | tr '[:upper:]' '[:lower:]')
         if [[ "$EFFORT_LOWER" == "high" ]] || [[ "$EFFORT_LOWER" == "medium" ]] || [[ "$EFFORT_LOWER" == "low" ]]; then
-            [[ "$FIRST_FIELD" == false ]] && JSON_CONFIG+=','
-            JSON_CONFIG+='"effort":"'$EFFORT_LOWER'"'
-            FIRST_FIELD=false
+            YAML_CONFIG+="
+  effort: ${EFFORT_LOWER}"
         fi
     fi
     
     if [[ -n "${AI_REASONING_MAX_TOKENS:-}" ]]; then
-        [[ "$FIRST_FIELD" == false ]] && JSON_CONFIG+=','
-        JSON_CONFIG+='"max_tokens":'$AI_REASONING_MAX_TOKENS
-        FIRST_FIELD=false
+        YAML_CONFIG+="
+  max_tokens: ${AI_REASONING_MAX_TOKENS}"
     fi
     
     if [[ -n "${AI_REASONING_EXCLUDE:-}" ]]; then
         EXCLUDE_BOOL=$(convert_bool "$AI_REASONING_EXCLUDE")
-        if [[ "$EXCLUDE_BOOL" != "null" ]]; then
-            [[ "$FIRST_FIELD" == false ]] && JSON_CONFIG+=','
-            JSON_CONFIG+='"exclude":'$EXCLUDE_BOOL
+        if [[ -n "$EXCLUDE_BOOL" ]]; then
+            YAML_CONFIG+="
+  exclude: ${EXCLUDE_BOOL}"
         fi
     fi
-    
-    JSON_CONFIG+='}'
-    FIRST_SECTION=false
 fi
 
 # MCP configuration
-MCP_SECTION_NEEDED=false
-MCP_CONFIG=""
-
+MCP_ADDED=false
 if [[ -n "${AI_DISABLE_TOOLS:-}" ]]; then
     DISABLE_BOOL=$(convert_bool "$AI_DISABLE_TOOLS")
-    if [[ "$DISABLE_BOOL" != "null" ]]; then
-        MCP_CONFIG='"disable_tools":'$DISABLE_BOOL
-        MCP_SECTION_NEEDED=true
+    if [[ -n "$DISABLE_BOOL" ]]; then
+        YAML_CONFIG+="
+
+# MCP Configuration
+mcp:
+  disable_tools: ${DISABLE_BOOL}"
+        MCP_ADDED=true
     fi
 fi
 
-# Always preserve existing MCP configuration when merging
-if [[ "$MERGE" == true ]] && [[ -f "$OUTPUT_FILE" ]]; then
-    if command -v jq >/dev/null 2>&1; then
-        # Get existing MCP configuration
-        EXISTING_MCP=$(jq '.mcp // {}' "$OUTPUT_FILE" 2>/dev/null || echo "{}")
-        if [[ "$EXISTING_MCP" != "{}" ]] && [[ "$EXISTING_MCP" != "null" ]]; then
-            # If we have new MCP config, merge it
-            if [[ "$MCP_SECTION_NEEDED" == true ]]; then
-                # Create a temporary JSON with our new values
-                TEMP_MCP='{"disable_tools":'$(convert_bool "${AI_DISABLE_TOOLS:-false}")'}'
-                # Merge existing with new (new values override)
-                MERGED_MCP=$(echo "$EXISTING_MCP" | jq ". * $TEMP_MCP")
-                [[ "$FIRST_SECTION" == false ]] && JSON_CONFIG+=','
-                JSON_CONFIG+='"mcp":'$MERGED_MCP
-                FIRST_SECTION=false
-                MCP_SECTION_NEEDED=false
-            else
-                # Just preserve existing MCP config as-is
-                [[ "$FIRST_SECTION" == false ]] && JSON_CONFIG+=','
-                JSON_CONFIG+='"mcp":'$EXISTING_MCP
-                FIRST_SECTION=false
-            fi
-        elif [[ "$MCP_SECTION_NEEDED" == true ]]; then
-            # No existing MCP config, just add our new one
-            [[ "$FIRST_SECTION" == false ]] && JSON_CONFIG+=','
-            JSON_CONFIG+='"mcp":{'$MCP_CONFIG'}'
-            FIRST_SECTION=false
-        fi
-    elif [[ "$MCP_SECTION_NEEDED" == true ]]; then
-        # No jq and we have MCP config to add
-        echo "Warning: jq not found, MCP merge may not preserve all settings"
-        [[ "$FIRST_SECTION" == false ]] && JSON_CONFIG+=','
-        JSON_CONFIG+='"mcp":{'$MCP_CONFIG'}'
-        FIRST_SECTION=false
-    fi
-elif [[ "$MCP_SECTION_NEEDED" == true ]]; then
-    # Not merging, just add MCP config if we have it
-    [[ "$FIRST_SECTION" == false ]] && JSON_CONFIG+=','
-    JSON_CONFIG+='"mcp":{'$MCP_CONFIG'}'
-    FIRST_SECTION=false
-fi
-
-JSON_CONFIG+='}'
-
-# Format JSON using jq if available, otherwise use basic formatting
-if command -v jq >/dev/null 2>&1; then
-    FORMATTED_JSON=$(echo "$JSON_CONFIG" | jq .)
-else
-    # Basic formatting without jq
-    FORMATTED_JSON=$(echo "$JSON_CONFIG" | sed 's/,/,\n  /g' | sed 's/{/{\n  /g' | sed 's/}/\n}/g')
-fi
-
-# Handle merge mode
+# Handle merge mode - preserve existing MCP servers
 if [[ "$MERGE" == true ]] && [[ -f "$OUTPUT_FILE" ]]; then
     echo "Merging with existing configuration..."
-    if command -v jq >/dev/null 2>&1; then
-        # Use jq to merge configs (new values override old)
-        MERGED_JSON=$(jq -s '.[0] * .[1]' "$OUTPUT_FILE" <(echo "$FORMATTED_JSON"))
-        FORMATTED_JSON="$MERGED_JSON"
+    
+    # Check if we have Python with PyYAML (more reliable than shell parsing)
+    if command -v python3 >/dev/null 2>&1 && python3 -c "import yaml" 2>/dev/null; then
+        # Use Python to merge YAML files
+        MERGED_YAML=$(python3 -c "
+import yaml
+import sys
+
+# Read existing config
+try:
+    with open('$OUTPUT_FILE', 'r') as f:
+        existing = yaml.safe_load(f) or {}
+except:
+    existing = {}
+
+# Parse new config (convert from our text format)
+new_config = {}
+config_text = '''$YAML_CONFIG'''
+
+# Simple parser for our generated YAML
+import re
+lines = config_text.strip().split('\n')
+current_section = None
+current_subsection = None
+
+for line in lines:
+    if line.startswith('#') or not line.strip():
+        continue
+    if not line.startswith(' '):
+        # Top-level section
+        if ':' in line:
+            section = line.split(':')[0].strip()
+            new_config[section] = {}
+            current_section = section
+            current_subsection = None
+    elif line.startswith('  ') and not line.startswith('    '):
+        # Second-level field
+        if ':' in line and current_section:
+            parts = line.strip().split(':', 1)
+            key = parts[0].strip()
+            value = parts[1].strip() if len(parts) > 1 else ''
+            # Parse value
+            if value.lower() in ('true', 'false'):
+                value = value.lower() == 'true'
+            elif value.isdigit():
+                value = int(value)
+            elif value.startswith('\"') and value.endswith('\"'):
+                value = value[1:-1]
+            new_config[current_section][key] = value
+
+# Merge configurations (new values override old)
+for key, value in new_config.items():
+    if key in existing and isinstance(existing[key], dict) and isinstance(value, dict):
+        existing[key].update(value)
+    else:
+        existing[key] = value
+
+# Output merged YAML
+import yaml
+print(yaml.dump(existing, default_flow_style=False, sort_keys=False))
+" 2>/dev/null || echo "$YAML_CONFIG")
+        
+        if [[ -n "$MERGED_YAML" ]]; then
+            YAML_CONFIG="$MERGED_YAML"
+        fi
     else
-        echo "Warning: jq not found, merge may not work correctly"
+        echo "Warning: Python with PyYAML not found, merge may not preserve all settings"
+        echo "Consider installing: pip3 install pyyaml"
+        
+        # Try to preserve MCP servers section if it exists
+        if grep -q "^mcp:" "$OUTPUT_FILE" 2>/dev/null; then
+            # Extract existing MCP section
+            EXISTING_MCP=$(sed -n '/^mcp:/,/^[^ ]/p' "$OUTPUT_FILE" | sed '$d')
+            
+            if [[ -n "$EXISTING_MCP" ]] && [[ "$MCP_ADDED" == false ]]; then
+                YAML_CONFIG+="
+
+$EXISTING_MCP"
+            elif [[ -n "$EXISTING_MCP" ]]; then
+                # We already added MCP section, need to merge
+                echo "Note: Manual merge may be needed for MCP configuration"
+            fi
+        fi
     fi
 fi
 
 # Dry run mode
 if [[ "$DRY_RUN" == true ]]; then
     echo "Generated configuration:"
-    echo "$FORMATTED_JSON"
+    echo "$YAML_CONFIG"
     exit 0
 fi
 
 # Check if output file exists
-if [[ -f "$OUTPUT_FILE" ]] && [[ "$FORCE" == false ]]; then
+if [[ -f "$OUTPUT_FILE" ]] && [[ "$FORCE" == false ]] && [[ "$MERGE" == false ]]; then
     read -p "$OUTPUT_FILE already exists. Overwrite? (y/N): " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -296,9 +318,10 @@ if [[ ! -d "$OUTPUT_DIR" ]]; then
 fi
 
 # Write config file
-echo "$FORMATTED_JSON" > "$OUTPUT_FILE"
+echo "$YAML_CONFIG" > "$OUTPUT_FILE"
 
 echo "✅ Configuration written to $OUTPUT_FILE"
 echo ""
 echo "Note: OPENROUTER_API_KEY must remain as an environment variable for security."
-echo "All other settings can now be managed via the JSON config file."
+echo "All other settings can now be managed via the YAML config file."
+echo "YAML format supports comments - feel free to add documentation!"

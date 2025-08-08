@@ -205,7 +205,7 @@ impl Config {
         // Get model: env var > JSON config > default
         let model = env::var("AI_MODEL").ok()
             .or(json_config.model.default_model.clone())
-            .unwrap_or_else(|| "openai/gpt-4o-mini".to_string());
+            .unwrap_or_else(|| "openai/gpt-5".to_string());
 
         // Get system prompt: env var > JSON config
         let system_prompt = env::var("AI_SYSTEM_PROMPT").ok()
@@ -333,8 +333,16 @@ impl JsonConfig {
                 let contents = fs::read_to_string(&path)
                     .with_context(|| format!("Failed to read config file: {}", path.display()))?;
                 
-                let config: JsonConfig = serde_json::from_str(&contents)
-                    .with_context(|| format!("Failed to parse config file: {}", path.display()))?;
+                // Try YAML first, then fall back to JSON for backward compatibility
+                let config: JsonConfig = if path.extension().and_then(|s| s.to_str()) == Some("yaml") 
+                    || path.extension().and_then(|s| s.to_str()) == Some("yml") {
+                    serde_yaml::from_str(&contents)
+                        .with_context(|| format!("Failed to parse YAML config file: {}", path.display()))?
+                } else {
+                    // Try JSON for backward compatibility
+                    serde_json::from_str(&contents)
+                        .with_context(|| format!("Failed to parse JSON config file: {}", path.display()))?
+                };
                 
                 return Ok(config);
             }
@@ -348,11 +356,16 @@ impl JsonConfig {
         let mut paths = Vec::new();
         
         // 1. Current directory (highest priority - local override)
-        paths.push(PathBuf::from(".cmd2ai.json"));
+        paths.push(PathBuf::from(".cmd2ai.yaml"));
+        paths.push(PathBuf::from(".cmd2ai.yml"));
+        paths.push(PathBuf::from(".cmd2ai.json")); // Backward compatibility
         
         // 2. User's config directory (global config)
         if let Some(home_dir) = dirs::home_dir() {
-            paths.push(home_dir.join(".config").join("cmd2ai").join("cmd2ai.json"));
+            let config_dir = home_dir.join(".config").join("cmd2ai");
+            paths.push(config_dir.join("cmd2ai.yaml"));
+            paths.push(config_dir.join("cmd2ai.yml"));
+            paths.push(config_dir.join("cmd2ai.json")); // Backward compatibility
         }
         
         paths

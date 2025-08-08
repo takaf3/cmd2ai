@@ -43,19 +43,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Handle --config-init option
     if args.config_init {
-        let example_config = include_str!("../config.example.json");
-        let config_path = std::path::PathBuf::from(".cmd2ai.json");
+        let example_config = include_str!("../config.example.yaml");
+        let config_path = std::path::PathBuf::from(".cmd2ai.yaml");
         
         if config_path.exists() {
-            eprintln!("{} Config file already exists at .cmd2ai.json", "Error:".red());
+            eprintln!("{} Config file already exists at .cmd2ai.yaml", "Error:".red());
             eprintln!("Use a different path or remove the existing file.");
             process::exit(1);
         }
         
         match std::fs::write(&config_path, example_config) {
             Ok(_) => {
-                println!("{}", "Config file created at .cmd2ai.json".green());
+                println!("{}", "Config file created at .cmd2ai.yaml".green());
                 println!("Edit this file to configure your MCP servers.");
+                println!("YAML format supports comments for better documentation!");
                 return Ok(());
             }
             Err(e) => {

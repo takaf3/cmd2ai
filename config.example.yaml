@@ -1,0 +1,156 @@
+# cmd2ai Configuration File
+# This file configures AI model settings and MCP (Model Context Protocol) servers
+
+# API Configuration
+api:
+  # Custom API endpoint (optional)
+  # Default: https://openrouter.ai/api/v1
+  # endpoint: https://api.openai.com/v1
+  
+  # Request timeout in seconds
+  stream_timeout: 30
+
+# Model Configuration
+model:
+  # Default AI model to use
+  # Examples: openai/gpt-5, openai/gpt-4, anthropic/claude-3-opus
+  default_model: openai/gpt-5
+  
+  # System prompt to prepend to all conversations (optional)
+  # system_prompt: You are a helpful assistant.
+
+# Session Configuration
+session:
+  # Enable verbose debug logging
+  verbose: false
+
+# Reasoning Configuration
+# For models that support chain-of-thought reasoning
+reasoning:
+  # Enable reasoning by default
+  enabled: false
+  
+  # Reasoning effort level: high, medium, or low
+  effort: low
+  
+  # Maximum tokens for reasoning (optional)
+  # max_tokens: 2000
+  
+  # Use reasoning internally but exclude from output
+  exclude: false
+
+# MCP (Model Context Protocol) Configuration
+mcp:
+  # Disable all MCP tools
+  disable_tools: false
+  
+  # MCP Settings
+  settings:
+    # Automatically detect and activate relevant MCP servers based on query
+    auto_detect: true
+    
+    # Timeout for MCP operations in seconds
+    timeout: 30
+  
+  # MCP Server Definitions
+  servers:
+    # Filesystem MCP Server
+    - name: filesystem
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+      description: File system operations
+      # Keywords that trigger this server
+      auto_activate_keywords:
+        - file
+        - files
+        - directory
+        - folder
+        - read
+        - write
+        - create
+        - delete
+        - list
+      enabled: true
+    
+    # Time MCP Server
+    - name: time
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-time"]
+      description: Time and date utilities
+      auto_activate_keywords:
+        - time
+        - clock
+        - current time
+        - what time
+        - date
+        - today
+        - tomorrow
+        - yesterday
+      enabled: true
+    
+    # GitHub MCP Server (disabled by default - requires GITHUB_TOKEN)
+    - name: github
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-github"]
+      description: GitHub API integration
+      auto_activate_keywords:
+        - github
+        - repository
+        - repo
+        - issue
+        - pull request
+        - pr
+        - commit
+      # Environment variables for this server
+      # Use ${VAR_NAME} syntax for expansion
+      env:
+        GITHUB_TOKEN: ${GITHUB_TOKEN}
+      enabled: false
+    
+    # Web Browser MCP Server
+    - name: web
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-web"]
+      description: Web browsing and scraping
+      auto_activate_keywords:
+        - browse
+        - website
+        - webpage
+        - url
+        - fetch
+        - scrape
+        - web
+        - http
+      enabled: true
+    
+    # PostgreSQL MCP Server (disabled by default - requires DATABASE_URL)
+    - name: postgres
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-postgres"]
+      description: PostgreSQL database operations
+      auto_activate_keywords:
+        - database
+        - sql
+        - postgres
+        - postgresql
+        - query
+        - table
+        - select
+        - insert
+        - update
+        - delete
+      env:
+        DATABASE_URL: ${DATABASE_URL}
+      enabled: false
+  
+  # Tool Selection Configuration
+  tool_selection:
+    # Maximum number of MCP servers to activate for a single query
+    max_servers: 3
+    
+    # Minimum keyword match score (0.0 to 1.0)
+    # Higher values require stronger keyword matches
+    min_match_score: 0.3
+    
+    # Prompt user before activating MCP servers
+    prompt_before_activation: false

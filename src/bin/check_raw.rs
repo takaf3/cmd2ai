@@ -23,7 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Get model
-    let model = env::var("AI_MODEL").unwrap_or_else(|_| "openai/gpt-4o-mini".to_string());
+    let model = env::var("AI_MODEL").unwrap_or_else(|_| "openai/gpt-5".to_string());
 
     println!("{}", format!("Using model: {}", model).green());
     println!("{}", format!("Prompt: {}", prompt).cyan());
