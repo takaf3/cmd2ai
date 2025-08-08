@@ -9,6 +9,7 @@ use clap::Parser;
 use colored::*;
 use futures::StreamExt;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use serde_json::json;
 use std::io::{self, Write};
 use std::process;
 use tokio::time::{timeout, Duration};
@@ -260,14 +261,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
-    // Use non-streaming when tools are available to properly handle tool calls
+    // Use non-streaming when tools are available for proper tool handling
+    // OpenRouter's streaming API doesn't properly stream tool call arguments
     let use_streaming = tools.is_none();
     
     let request_body = RequestBody {
         model: final_model.clone(),
         messages: messages.clone(),
         stream: use_streaming,
-        reasoning: config.reasoning,
+        reasoning: config.reasoning.clone(),
         tools: tools.clone(),
     };
     
@@ -302,17 +304,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         process::exit(1);
     }
 
-    // Process response - streaming or non-streaming based on tools
+    // Process response based on whether we're streaming or not
     let assistant_response = if use_streaming {
-        process_streaming_response(
+        // Streaming path - no tools available
+        let streaming_result = process_streaming_response(
             response,
             config.stream_timeout,
             args.reasoning_exclude,
             config.verbose,
         )
-        .await?
+        .await?;
+        
+        streaming_result.content
     } else {
-        // Non-streaming response for tool handling
+        // Non-streaming path - handle tools properly
         let response_text = response.text().await?;
         if config.verbose {
             eprintln!("{}", format!("[AI] Raw response: {}", response_text).dimmed());
@@ -321,60 +326,166 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Parse the response
         let response_json: serde_json::Value = serde_json::from_str(&response_text)?;
         
-        // Check for tool calls in the response
+        // Process the non-streaming response with tool handling
         if let Some(choices) = response_json.get("choices").and_then(|c| c.as_array()) {
             if let Some(first_choice) = choices.first() {
+                // Check for reasoning content first
+                if let Some(reasoning_content) = first_choice.get("message")
+                    .and_then(|m| m.get("reasoning_content"))
+                    .and_then(|r| r.as_str()) {
+                    
+                    if !args.reasoning_exclude && !reasoning_content.is_empty() {
+                        println!();
+                        println!("{}", format!("{}[{}]{}", "┌─".dimmed(), "REASONING".cyan().bold(), "──────────────────────────────────────────────".dimmed()));
+                        let display_reasoning = reasoning_content
+                            .replace("**", "")
+                            .trim()
+                            .to_string();
+                        println!("{}", display_reasoning.dimmed());
+                        println!("{}", "└──────────────────────────────────────────────────────────".dimmed());
+                        println!();
+                    }
+                }
+                
                 if let Some(message) = first_choice.get("message") {
                     // Check if there are tool calls
                     if let Some(tool_calls) = message.get("tool_calls").and_then(|tc| tc.as_array()) {
-                        if config.verbose {
-                            println!("{}", "Executing tools...".cyan());
-                        }
-                        
-                        // Execute each tool call
-                        for tool_call in tool_calls {
-                            if let (Some(_id), Some(function)) = (
-                                tool_call.get("id").and_then(|i| i.as_str()),
-                                tool_call.get("function")
-                            ) {
-                                if let (Some(name), Some(arguments_str)) = (
-                                    function.get("name").and_then(|n| n.as_str()),
-                                    function.get("arguments").and_then(|a| a.as_str())
+                        if !tool_calls.is_empty() {
+                            if config.verbose {
+                                println!("{}", "Executing tools...".cyan());
+                            }
+                            
+                            // Execute each tool call
+                            let mut tool_results = Vec::new();
+                            for tool_call in tool_calls {
+                                if let (Some(id), Some(function)) = (
+                                    tool_call.get("id").and_then(|i| i.as_str()),
+                                    tool_call.get("function")
                                 ) {
-                                    // Always show when we're calling a tool (even in non-verbose)
-                                    println!("{}", format!("Calling tool: {}...", name).cyan());
-                                    
-                                    // Parse arguments
-                                    if let Ok(arguments) = serde_json::from_str::<serde_json::Value>(arguments_str) {
-                                        // Execute tool via MCP
-                                        if let Some(ref client) = mcp_client {
-                                            let tool_call = mcp::McpToolCall {
-                                                name: name.to_string(),
-                                                arguments,
-                                            };
-                                            
-                                            match client.call_tool(&tool_call).await {
-                                                Ok(result) => {
-                                                    // Don't show "Tool executed successfully!" - just show the result
-                                                    // Format result for display
-                                                    if let Some(content) = result.content.first() {
-                                                        println!("{}", content.text);
+                                    if let (Some(name), Some(arguments_str)) = (
+                                        function.get("name").and_then(|n| n.as_str()),
+                                        function.get("arguments").and_then(|a| a.as_str())
+                                    ) {
+                                        println!("{}", format!("Calling tool: {}...", name).cyan());
+                                        
+                                        // Parse arguments
+                                        if let Ok(arguments) = serde_json::from_str::<serde_json::Value>(arguments_str) {
+                                            // Execute tool via MCP
+                                            if let Some(ref client) = mcp_client {
+                                                let mcp_tool_call = mcp::McpToolCall {
+                                                    name: name.to_string(),
+                                                    arguments,
+                                                };
+                                                
+                                                match client.call_tool(&mcp_tool_call).await {
+                                                    Ok(result) => {
+                                                        if let Some(content) = result.content.first() {
+                                                            println!("{}", content.text);
+                                                            
+                                                            // Store the result to send back to the AI
+                                                            tool_results.push(Message {
+                                                                role: "tool".to_string(),
+                                                                content: Some(content.text.clone()),
+                                                                tool_calls: None,
+                                                                tool_call_id: Some(id.to_string()),
+                                                            });
+                                                        }
                                                     }
-                                                }
-                                                Err(e) => {
-                                                    eprintln!("{}", format!("Tool execution error: {}", e).red());
+                                                    Err(e) => {
+                                                        eprintln!("{}", format!("Tool execution error: {}", e).red());
+                                                        tool_results.push(Message {
+                                                            role: "tool".to_string(),
+                                                            content: Some(format!("Error: {}", e)),
+                                                            tool_calls: None,
+                                                            tool_call_id: Some(id.to_string()),
+                                                        });
+                                                    }
                                                 }
                                             }
                                         }
                                     }
                                 }
                             }
+                            
+                            // If we executed tools, we need to send the results back and get a new response
+                            if !tool_results.is_empty() {
+                                // Add the assistant's message with tool calls to the conversation
+                                // Convert tool_calls array to proper ToolCall objects
+                                let tool_calls_typed: Vec<models::ToolCall> = tool_calls
+                                    .iter()
+                                    .filter_map(|tc| serde_json::from_value(tc.clone()).ok())
+                                    .collect();
+                                
+                                messages.push(Message {
+                                    role: "assistant".to_string(),
+                                    content: message.get("content").and_then(|c| c.as_str()).map(|s| s.to_string()),
+                                    tool_calls: if tool_calls_typed.is_empty() { None } else { Some(tool_calls_typed) },
+                                    tool_call_id: None,
+                                });
+                                
+                                // Add tool results to the conversation
+                                for result in tool_results {
+                                    messages.push(result);
+                                }
+                                
+                                // Make another API call to get the final response - NOW WITH STREAMING!
+                                let followup_request = RequestBody {
+                                    model: final_model.clone(),
+                                    messages: messages.clone(),
+                                    stream: true,  // Enable streaming for the final answer
+                                    reasoning: config.reasoning.clone(),
+                                    tools: None,  // Don't send tools again for the final response
+                                };
+                                
+                                if config.verbose {
+                                    eprintln!("{}", "[AI] Making follow-up request with tool results (streaming enabled)...".dimmed());
+                                }
+                                
+                                let followup_response = make_api_request(&config.api_key, &followup_request).await?;
+                                
+                                if !followup_response.status().is_success() {
+                                    let status = followup_response.status();
+                                    let error_text = followup_response.text().await?;
+                                    eprintln!(
+                                        "{} HTTP error! status: {}, message: {}",
+                                        "Error:".red(),
+                                        status,
+                                        error_text
+                                    );
+                                    process::exit(1);
+                                }
+                                
+                                // Process the follow-up STREAMING response for better UX
+                                let followup_result = process_streaming_response(
+                                    followup_response,
+                                    config.stream_timeout,
+                                    args.reasoning_exclude,
+                                    config.verbose,
+                                )
+                                .await?;
+                                
+                                // Return the final streamed response
+                                followup_result.content
+                            } else {
+                                // No tool calls, return the content
+                                "Tools executed successfully".to_string()
+                            }
+                        } else {
+                            // No tool calls, just return the content
+                            "No tool calls in response".to_string()
                         }
-                        
-                        "Tools executed successfully".to_string()
                     } else if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
-                        // Print the AI's response when no tools were called
-                        println!("{}", content);
+                        // Use CodeBuffer to properly format the response with syntax highlighting
+                        let mut code_buffer = highlight::CodeBuffer::new();
+                        let formatted = code_buffer.append(content);
+                        if !formatted.is_empty() {
+                            print!("{}", formatted);
+                        }
+                        let remaining = code_buffer.flush();
+                        if !remaining.is_empty() {
+                            print!("{}", remaining.trim_end());
+                        }
+                        println!();
                         content.to_string()
                     } else {
                         "No response content".to_string()
@@ -481,12 +592,17 @@ async fn make_api_request(
         .await
 }
 
+struct StreamingResult {
+    content: String,
+    tool_calls: Vec<serde_json::Value>,
+}
+
 async fn process_streaming_response(
     response: reqwest::Response,
     timeout_secs: u64,
     reasoning_exclude: bool,
     verbose: bool,
-) -> Result<String, Box<dyn std::error::Error>> {
+) -> Result<StreamingResult, Box<dyn std::error::Error>> {
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
     let mut citations: Vec<Citation> = vec![];
@@ -499,6 +615,7 @@ async fn process_streaming_response(
     let mut reasoning_buffer = String::new();
     let mut reasoning_displayed = false;
     let chunk_timeout = Duration::from_secs(timeout_secs);
+    let mut tool_calls: Vec<serde_json::Value> = Vec::new();
 
     loop {
         match timeout(chunk_timeout, stream.next()).await {
@@ -591,7 +708,10 @@ async fn process_streaming_response(
                             println!();
                             io::stdout().flush()?;
 
-                            return Ok(assistant_response);
+                            return Ok(StreamingResult {
+                                content: assistant_response,
+                                tool_calls,
+                            });
                         }
 
                         // Parse JSON data
@@ -628,6 +748,19 @@ async fn process_streaming_response(
                                                 }
                                             }
 
+                                            // Process tool calls
+                                            if let Some(delta_tool_calls) = &delta.tool_calls {
+                                                for tc in delta_tool_calls {
+                                                    // Accumulate tool call data
+                                                    if let Ok(tc_json) = serde_json::to_value(tc) {
+                                                        tool_calls.push(tc_json.clone());
+                                                        if verbose {
+                                                            eprintln!("{}", format!("[AI] Tool call detected: {:?}", tc_json).dimmed());
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            
                                             // Process content
                                             if let Some(content) = delta.content {
                                                 // Only close reasoning block if we have actual content (not just empty string)
@@ -734,5 +867,8 @@ async fn process_streaming_response(
     println!();
     io::stdout().flush()?;
 
-    Ok(assistant_response)
+    Ok(StreamingResult {
+        content: assistant_response,
+        tool_calls,
+    })
 }

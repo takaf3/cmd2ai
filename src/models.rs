@@ -33,7 +33,7 @@ pub struct Session {
     pub messages: Vec<Message>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct Reasoning {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
