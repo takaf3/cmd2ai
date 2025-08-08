@@ -72,6 +72,12 @@ pub struct Args {
     )]
     pub config_init: bool,
 
+    #[arg(
+        long = "api-endpoint",
+        help = "Custom API base URL (e.g., http://localhost:11434/v1)"
+    )]
+    pub api_endpoint: Option<String>,
+
     #[arg(help = "Command to send to AI")]
     pub command: Vec<String>,
 }

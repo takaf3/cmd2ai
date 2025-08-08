@@ -19,11 +19,11 @@ cargo build --release
 # Run directly with cargo
 cargo run --bin ai -- "your prompt here"
 
-# Run with web search
-cargo run --bin ai -- -s "latest news about Rust"
+# Run with MCP tools (auto-detection is now default)
+cargo run --bin ai -- "What time is it?"
 
-# Run with auto-tools (automatically detects MCP servers from config)
-cargo run --bin ai -- --auto-tools "What time is it?"
+# Run without MCP tools
+cargo run --bin ai -- --no-tools "What is 2+2?"
 
 # Initialize MCP config file
 cargo run --bin ai -- --config-init
@@ -99,8 +99,9 @@ User Input → CLI Args → Config Loading → MCP Server Detection → API Requ
 **Config System (`src/config.rs`)**:
 - `Config`: Runtime configuration from env vars and CLI args
 - `McpConfig`: MCP server definitions loaded from JSON files
-- `detect_servers_for_query()`: Keyword matching logic for auto-detection
+- Automatic server detection based on keywords (now default behavior)
 - Priority: CLI args > Local config > Global config > Env vars
+- API endpoint normalization (auto-appends `/chat/completions`)
 
 **MCP Client (`src/mcp/`)**:
 - `client.rs`: Manages server processes and JSON-RPC communication
@@ -121,9 +122,14 @@ User Input → CLI Args → Config Loading → MCP Server Detection → API Requ
 ### Critical Implementation Details
 
 **Web Search via MCP Tools**:
-- Web search is now handled through MCP tools (like Gemini) instead of built-in `:online` suffix
+- Web search is handled through MCP tools (like Gemini)
 - Configure MCP servers in config file for web search capabilities
 - The AI intelligently decides when to use search tools based on the query
+
+**Custom API Endpoints**:
+- Support for any OpenAI-compatible API endpoint
+- Configurable via `--api-endpoint` CLI arg or `AI_API_ENDPOINT` env var
+- Automatically appends `/chat/completions` to base URLs ending with `/v1`
 
 **MCP Configuration (`config.example.json`)**:
 - `auto_activate_keywords`: Must match with sufficient score (default 0.3 threshold)
@@ -150,6 +156,7 @@ Required:
 - `OPENROUTER_API_KEY` - API authentication
 
 Optional:
+- `AI_API_ENDPOINT` - Custom API base URL (default: "https://openrouter.ai/api/v1")
 - `AI_MODEL` - Default: "openai/gpt-4o-mini"
 - `AI_SYSTEM_PROMPT` - Custom system instructions  
 - `AI_VERBOSE` - Set to "true" for debug logging
@@ -182,11 +189,14 @@ Example server configuration:
 
 ```bash
 # Enable verbose logging to see MCP server detection
-AI_VERBOSE=true ai --auto-tools "your query"
+AI_VERBOSE=true ai "your query"
 
 # Test MCP server connection directly
-ai --mcp-server "test:echo:hello" --use-tools "test"
+ai --mcp-server "test:echo:hello" "test"
 
 # Check which config file is being loaded
-AI_VERBOSE=true ai --auto-tools "test" 2>&1 | grep "Available servers"
+AI_VERBOSE=true ai "test" 2>&1 | grep "Available servers"
+
+# Use custom API endpoint
+ai --api-endpoint "http://localhost:11434/v1" "Hello world"
 ```

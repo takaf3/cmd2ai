@@ -112,27 +112,24 @@ Clear all conversation history:
 
 ### Web Search
 
-Force web search:
+Disable MCP tools for a specific query:
 ```bash
-./ai --search "What's the latest news?"
+./ai --no-tools "What is 2+2?"
 ```
 
-Disable web search:
-```bash
-./ai --no-search "What is 2+2?"
-```
+Note: Web search is now handled through MCP tools. Configure appropriate MCP servers (like Gemini) in your config file for web search capabilities.
 
 ### MCP Tool Integration
 
-Connect to MCP servers and enable tool usage:
+Connect to MCP servers (tools are enabled by default):
 ```bash
 # Connect to filesystem MCP server
-./ai --mcp-server "fs:npx:-y,@modelcontextprotocol/server-filesystem,/tmp" --use-tools "List files in /tmp"
+./ai --mcp-server "fs:npx:-y,@modelcontextprotocol/server-filesystem,/tmp" "List files in /tmp"
 
 # Connect to multiple MCP servers
 ./ai --mcp-server "fs:npx:-y,@modelcontextprotocol/server-filesystem,/home" \
      --mcp-server "time:npx:-y,@modelcontextprotocol/server-time" \
-     --use-tools "What time is it and what files are in my home directory?"
+     "What time is it and what files are in my home directory?"
 ```
 
 MCP server format: `name:command:arg1,arg2,...`
@@ -151,12 +148,12 @@ Instead of passing MCP servers via command line, you can configure them in a JSO
 
 This creates `.cmd2ai.json` with example MCP server configurations.
 
-2. Use auto-tools to automatically detect and use appropriate MCP servers:
+2. With a properly configured `.cmd2ai.json`, MCP servers are automatically detected based on your query:
 ```bash
-./ai --auto-tools "What time is it?"
+./ai "What time is it?"
 # Automatically detects and connects to the time MCP server
 
-./ai --auto-tools "List files in my home directory" 
+./ai "List files in my home directory" 
 # Automatically detects and connects to the filesystem MCP server
 ```
 
@@ -223,7 +220,8 @@ Command-line arguments always take precedence over environment variables, allowi
 ## Environment Variables
 
 - `OPENROUTER_API_KEY` - Required. Your OpenRouter API key
-- `AI_MODEL` - Optional. AI model to use (default: "openai/gpt-4.1-mini")
+- `AI_API_ENDPOINT` - Optional. Custom API base URL (default: "https://openrouter.ai/api/v1")
+- `AI_MODEL` - Optional. AI model to use (default: "openai/gpt-4o-mini")
 - `AI_SYSTEM_PROMPT` - Optional. System prompt to prepend to messages
 - `AI_STREAM_TIMEOUT` - Optional. Timeout in seconds for streaming responses (default: 30)
 - `AI_VERBOSE` - Optional. Enable debug logging when set to "true"
@@ -238,18 +236,51 @@ Command-line arguments always take precedence over environment variables, allowi
 
 ## Command-Line Options
 
-- `-s, --search` - Force web search
-- `--no-search` - Disable web search
 - `-n, --new` - Start a new conversation
 - `-c, --continue` - Continue previous conversation even if expired
 - `--clear` - Clear all conversation history
+- `--api-endpoint` - Custom API base URL (e.g., http://localhost:11434/v1)
 - `--mcp-server` - Connect to MCP server (format: name:command:arg1,arg2,...)
-- `--use-tools` - Enable MCP tool usage in AI responses
+- `--no-tools` - Disable MCP tools for this query
+- `--config-init` - Initialize a config file with example MCP servers
 - `--reasoning-effort` - Set reasoning effort level (high, medium, low)
 - `--reasoning-max-tokens` - Set maximum tokens for reasoning
 - `--reasoning-exclude` - Use reasoning but exclude from response
 - `--reasoning-enabled` - Enable reasoning with default parameters
 - `-h, --help` - Print help information
+
+## Using Custom API Endpoints
+
+You can use cmd2ai with any OpenAI-compatible API endpoint (including local LLMs, OpenAI, or other providers). You only need to provide the base URL up to `/v1`, and `/chat/completions` will be appended automatically.
+
+Using command-line argument:
+```bash
+# Use a local LLM server (Ollama)
+./ai --api-endpoint "http://localhost:11434/v1" "Hello world"
+
+# Use OpenAI directly
+./ai --api-endpoint "https://api.openai.com/v1" "Explain quantum computing"
+
+# Use a local AI server
+./ai --api-endpoint "http://localhost:8080/v1" "What is the weather?"
+```
+
+Using environment variable:
+```bash
+# Set custom endpoint for all commands
+export AI_API_ENDPOINT="http://localhost:11434/v1"
+./ai "What is the weather today?"
+```
+
+The endpoint URL is automatically normalized:
+- If you provide just the base URL (e.g., `http://localhost:8080`), it appends `/v1/chat/completions`
+- If you provide up to `/v1`, it appends `/chat/completions`
+- If you provide the full path including `/chat/completions`, it uses it as-is
+
+The priority order is:
+1. Command-line argument (`--api-endpoint`)
+2. Environment variable (`AI_API_ENDPOINT`)
+3. Default OpenRouter endpoint
 
 ## Web Search via MCP Tools
 

@@ -280,7 +280,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if config.verbose {
         eprintln!("{}", "[AI] Making API request...".dimmed());
     }
-    let response = make_api_request(&config.api_key, &request_body).await?;
+    let response = make_api_request(&config.api_key, &config.api_endpoint, &request_body).await?;
 
     if config.verbose {
         eprintln!("{}", format!("[AI] Response status: {}", response.status()).dimmed());
@@ -435,7 +435,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     eprintln!("{}", "[AI] Making follow-up request with tool results (streaming enabled)...".dimmed());
                                 }
                                 
-                                let followup_response = make_api_request(&config.api_key, &followup_request).await?;
+                                let followup_response = make_api_request(&config.api_key, &config.api_endpoint, &followup_request).await?;
                                 
                                 if !followup_response.status().is_success() {
                                     let status = followup_response.status();
@@ -568,12 +568,17 @@ fn print_usage() {
     );
     eprintln!(
         "{}",
+        "      --api-endpoint         Custom API base URL (e.g., http://localhost:11434/v1)".dimmed()
+    );
+    eprintln!(
+        "{}",
         "  -h, --help                 Print help".dimmed()
     );
 }
 
 async fn make_api_request(
     api_key: &str,
+    api_endpoint: &str,
     request_body: &RequestBody,
 ) -> Result<reqwest::Response, reqwest::Error> {
     let mut headers = HeaderMap::new();
@@ -588,7 +593,7 @@ async fn make_api_request(
         .build()?;
 
     client
-        .post("https://openrouter.ai/api/v1/chat/completions")
+        .post(api_endpoint)
         .json(&request_body)
         .send()
         .await

@@ -9,6 +9,7 @@ use std::path::PathBuf;
 
 pub struct Config {
     pub api_key: String,
+    pub api_endpoint: String,
     pub model: String,
     pub system_prompt: Option<String>,
     pub stream_timeout: u64,
@@ -91,8 +92,26 @@ impl Config {
         let api_key = env::var("OPENROUTER_API_KEY")
             .map_err(|_| "OPENROUTER_API_KEY environment variable not set")?;
 
+        // Get API endpoint (with support for custom endpoints)
+        let api_endpoint = args.api_endpoint.clone()
+            .or_else(|| env::var("AI_API_ENDPOINT").ok())
+            .map(|endpoint| {
+                // If the endpoint doesn't end with /chat/completions, append it
+                if endpoint.ends_with("/chat/completions") {
+                    endpoint
+                } else if endpoint.ends_with("/v1") {
+                    format!("{}/chat/completions", endpoint)
+                } else if endpoint.ends_with("/v1/") {
+                    format!("{}chat/completions", endpoint)
+                } else {
+                    // Assume it's a base URL without /v1
+                    format!("{}/v1/chat/completions", endpoint.trim_end_matches('/'))
+                }
+            })
+            .unwrap_or_else(|| "https://openrouter.ai/api/v1/chat/completions".to_string());
+
         // Get model
-        let model = env::var("AI_MODEL").unwrap_or_else(|_| "openai/gpt-4.1-mini".to_string());
+        let model = env::var("AI_MODEL").unwrap_or_else(|_| "openai/gpt-4o-mini".to_string());
 
         // Get system prompt
         let system_prompt = env::var("AI_SYSTEM_PROMPT").ok();
@@ -114,6 +133,7 @@ impl Config {
 
         Ok(Config {
             api_key,
+            api_endpoint,
             model,
             system_prompt,
             stream_timeout,
