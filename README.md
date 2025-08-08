@@ -12,6 +12,8 @@ A fast command-line tool that pipes your terminal commands to AI models via the 
 - ✅ MCP (Model Context Protocol) tool integration for extended AI capabilities
 - ✅ Automatic MCP server detection based on query content
 - ✅ Web search via MCP tools (e.g., Gemini) instead of built-in :online suffix
+- ✅ Comprehensive JSON configuration with environment variable overrides
+- ✅ Configuration migration tool for easy setup
 
 ## Prerequisites
 
@@ -137,36 +139,110 @@ MCP server format: `name:command:arg1,arg2,...`
 - `command`: Command to launch the server (e.g., "npx")
 - `args`: Comma-separated arguments (optional)
 
-### MCP Configuration File
+### Configuration
 
-Instead of passing MCP servers via command line, you can configure them in a JSON file:
+cmd2ai supports comprehensive configuration through JSON files with environment variable overrides for debugging.
+
+#### Quick Setup
 
 1. Initialize a config file with examples:
 ```bash
 ./ai --config-init
 ```
 
-This creates `.cmd2ai.json` with example MCP server configurations.
-
-2. With a properly configured `.cmd2ai.json`, MCP servers are automatically detected based on your query:
+2. Migrate existing environment variables to JSON config:
 ```bash
-./ai "What time is it?"
-# Automatically detects and connects to the time MCP server
+# Migrate to global config (~/.config/cmd2ai/cmd2ai.json)
+./migrate_config.sh
 
-./ai "List files in my home directory" 
-# Automatically detects and connects to the filesystem MCP server
+# Or migrate to project-specific config
+./migrate_config.sh --output .cmd2ai.json
 ```
 
-The config file supports:
-- Multiple MCP server definitions
-- Auto-activation keywords for smart server selection
-- Environment variable expansion (e.g., `${GITHUB_TOKEN}`)
-- Per-server enable/disable flags
-- Tool selection thresholds and limits
+#### Configuration File Structure
 
 Config file locations (checked in priority order):
-1. `.cmd2ai.json` (current directory - local override)
-2. `~/.config/cmd2ai/cmd2ai.json` (global config)
+1. `.cmd2ai.json` (project-specific config)
+2. `~/.config/cmd2ai/cmd2ai.json` (global user config)
+
+Complete configuration example:
+```json
+{
+  "api": {
+    "endpoint": "https://openrouter.ai/api/v1",
+    "stream_timeout": 30
+  },
+  "model": {
+    "default_model": "openai/gpt-4o-mini",
+    "system_prompt": "You are a helpful assistant"
+  },
+  "session": {
+    "verbose": false
+  },
+  "reasoning": {
+    "enabled": false,
+    "effort": "low",
+    "max_tokens": 1000,
+    "exclude": false
+  },
+  "mcp": {
+    "disable_tools": false,
+    "settings": {
+      "auto_detect": true,
+      "timeout": 30
+    },
+    "servers": [
+      {
+        "name": "filesystem",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+        "auto_activate_keywords": ["file", "read", "write"],
+        "description": "File system operations",
+        "env": {"CUSTOM_VAR": "${ENV_VAR}"},
+        "enabled": true
+      }
+    ],
+    "tool_selection": {
+      "max_servers": 3,
+      "min_match_score": 0.3
+    }
+  }
+}
+```
+
+#### Priority Order
+
+Settings are resolved in this order (highest to lowest priority):
+1. **Command-line arguments** (e.g., `--api-endpoint`, `--no-tools`)
+2. **Environment variables** (e.g., `AI_MODEL`, `AI_VERBOSE`)
+3. **JSON configuration files**
+4. **Built-in defaults**
+
+This allows you to:
+- Set your preferred defaults in JSON config
+- Override temporarily with environment variables for debugging
+- Override for specific commands with CLI arguments
+
+#### Migration Tool
+
+The `migrate_config.sh` script helps convert existing environment variables to JSON:
+
+```bash
+# Show what would be migrated (dry run)
+./migrate_config.sh --dry-run
+
+# Migrate and merge with existing config
+./migrate_config.sh --merge
+
+# Force overwrite without prompting
+./migrate_config.sh --force
+```
+
+The migration tool:
+- Detects all AI_* environment variables
+- Preserves existing MCP server configurations when merging
+- Creates the config directory if needed
+- Keeps sensitive data (API keys) as environment variables
 
 ### Reasoning Tokens
 
@@ -219,16 +295,22 @@ Command-line arguments always take precedence over environment variables, allowi
 
 ## Environment Variables
 
-- `OPENROUTER_API_KEY` - Required. Your OpenRouter API key
-- `AI_API_ENDPOINT` - Optional. Custom API base URL (default: "https://openrouter.ai/api/v1")
-- `AI_MODEL` - Optional. AI model to use (default: "openai/gpt-4o-mini")
-- `AI_SYSTEM_PROMPT` - Optional. System prompt to prepend to messages
-- `AI_STREAM_TIMEOUT` - Optional. Timeout in seconds for streaming responses (default: 30)
-- `AI_VERBOSE` - Optional. Enable debug logging when set to "true"
-- `AI_REASONING_ENABLED` - Optional. Enable reasoning tokens ("true", "1", or "yes")
-- `AI_REASONING_EFFORT` - Optional. Set reasoning effort level ("high", "medium", or "low")
-- `AI_REASONING_MAX_TOKENS` - Optional. Maximum tokens for reasoning (numeric value)
-- `AI_REASONING_EXCLUDE` - Optional. Use reasoning but exclude from output ("true", "1", or "yes")
+**Required:**
+- `OPENROUTER_API_KEY` - Your OpenRouter API key (kept as env var for security)
+
+**Optional (can be set in JSON config or as env var overrides):**
+- `AI_API_ENDPOINT` - Custom API base URL
+- `AI_MODEL` - AI model to use
+- `AI_SYSTEM_PROMPT` - System prompt to prepend to messages
+- `AI_STREAM_TIMEOUT` - Timeout in seconds for streaming responses
+- `AI_VERBOSE` - Enable debug logging ("true")
+- `AI_REASONING_ENABLED` - Enable reasoning tokens ("true", "1", or "yes")
+- `AI_REASONING_EFFORT` - Set reasoning effort level ("high", "medium", or "low")
+- `AI_REASONING_MAX_TOKENS` - Maximum tokens for reasoning
+- `AI_REASONING_EXCLUDE` - Use reasoning but exclude from output ("true", "1", or "yes")
+- `AI_DISABLE_TOOLS` - Disable MCP tools ("true", "1", or "yes")
+
+**Note:** All settings except the API key can be configured in JSON files. Environment variables override JSON config values, which is useful for temporary changes or debugging.
 
 ## Security Considerations
 

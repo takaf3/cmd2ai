@@ -20,7 +20,57 @@ pub struct Config {
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct JsonConfig {
+    #[serde(default)]
+    pub api: ApiConfig,
+    #[serde(default)]
+    pub model: ModelConfig,
+    #[serde(default)]
+    pub session: SessionConfig,
+    #[serde(default)]
+    pub reasoning: ReasoningConfig,
+    #[serde(default)]
+    pub mcp: McpConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ApiConfig {
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    #[serde(default)]
+    pub stream_timeout: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ModelConfig {
+    #[serde(default)]
+    pub default_model: Option<String>,
+    #[serde(default)]
+    pub system_prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SessionConfig {
+    #[serde(default)]
+    pub verbose: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ReasoningConfig {
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub effort: Option<String>,
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+    #[serde(default)]
+    pub exclude: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct McpConfig {
+    #[serde(default)]
+    pub disable_tools: Option<bool>,
     #[serde(default)]
     pub settings: McpSettings,
     #[serde(default)]
@@ -62,6 +112,43 @@ pub struct ToolSelection {
     pub prompt_before_activation: bool,
 }
 
+impl Default for ApiConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: None,
+            stream_timeout: None,
+        }
+    }
+}
+
+impl Default for ModelConfig {
+    fn default() -> Self {
+        Self {
+            default_model: None,
+            system_prompt: None,
+        }
+    }
+}
+
+impl Default for SessionConfig {
+    fn default() -> Self {
+        Self {
+            verbose: None,
+        }
+    }
+}
+
+impl Default for ReasoningConfig {
+    fn default() -> Self {
+        Self {
+            enabled: None,
+            effort: None,
+            max_tokens: None,
+            exclude: None,
+        }
+    }
+}
+
 impl Default for McpSettings {
     fn default() -> Self {
         Self {
@@ -89,13 +176,17 @@ fn default_min_match_score() -> f64 { 0.3 }
 
 impl Config {
     pub fn from_env_and_args(args: &Args) -> Result<Self, String> {
-        // Get API key
+        // Load JSON configuration first
+        let json_config = JsonConfig::load().unwrap_or_default();
+        
+        // Get API key (still required from env var for security)
         let api_key = env::var("OPENROUTER_API_KEY")
             .map_err(|_| "OPENROUTER_API_KEY environment variable not set")?;
 
-        // Get API endpoint (with support for custom endpoints)
+        // Get API endpoint: CLI args > env var > JSON config > default
         let api_endpoint = args.api_endpoint.clone()
             .or_else(|| env::var("AI_API_ENDPOINT").ok())
+            .or(json_config.api.endpoint.clone())
             .map(|endpoint| {
                 // If the endpoint doesn't end with /chat/completions, append it
                 if endpoint.ends_with("/chat/completions") {
@@ -111,33 +202,42 @@ impl Config {
             })
             .unwrap_or_else(|| "https://openrouter.ai/api/v1/chat/completions".to_string());
 
-        // Get model
-        let model = env::var("AI_MODEL").unwrap_or_else(|_| "openai/gpt-4o-mini".to_string());
+        // Get model: env var > JSON config > default
+        let model = env::var("AI_MODEL").ok()
+            .or(json_config.model.default_model.clone())
+            .unwrap_or_else(|| "openai/gpt-4o-mini".to_string());
 
-        // Get system prompt
-        let system_prompt = env::var("AI_SYSTEM_PROMPT").ok();
+        // Get system prompt: env var > JSON config
+        let system_prompt = env::var("AI_SYSTEM_PROMPT").ok()
+            .or(json_config.model.system_prompt.clone());
 
-        // Get stream timeout
+        // Get stream timeout: env var > JSON config > default
         let stream_timeout = env::var("AI_STREAM_TIMEOUT")
             .ok()
             .and_then(|s| s.parse::<u64>().ok())
+            .or(json_config.api.stream_timeout)
             .unwrap_or(30);
 
-        // Get verbose flag
-        let verbose = env::var("AI_VERBOSE").unwrap_or_default() == "true";
+        // Get verbose flag: env var > JSON config > default
+        let verbose = env::var("AI_VERBOSE")
+            .ok()
+            .map(|v| v == "true")
+            .or(json_config.session.verbose)
+            .unwrap_or(false);
 
-        // Get disable_tools flag - CLI arg takes precedence over env var
+        // Get disable_tools flag: CLI arg > env var > JSON config > default
         let disable_tools = args.no_tools || 
             env::var("AI_DISABLE_TOOLS")
                 .ok()
                 .map(|v| matches!(v.to_lowercase().as_str(), "true" | "1" | "yes"))
+                .or(json_config.mcp.disable_tools)
                 .unwrap_or(false);
 
-        // Build reasoning configuration from command-line arguments and environment variables
-        let reasoning = Self::build_reasoning_config(args);
+        // Build reasoning configuration from CLI args, env vars, and JSON config
+        let reasoning = Self::build_reasoning_config(args, &json_config.reasoning);
 
-        // Load MCP configuration
-        let mcp_config = McpConfig::load().unwrap_or_default();
+        // Use MCP configuration from JSON
+        let mcp_config = json_config.mcp;
 
         Ok(Config {
             api_key,
@@ -152,15 +252,14 @@ impl Config {
         })
     }
 
-    fn build_reasoning_config(args: &Args) -> Option<Reasoning> {
+    fn build_reasoning_config(args: &Args, json_reasoning: &ReasoningConfig) -> Option<Reasoning> {
         // Environment variables
         let env_reasoning_enabled = env::var("AI_REASONING_ENABLED")
             .ok()
             .and_then(|v| match v.to_lowercase().as_str() {
                 "true" | "1" | "yes" => Some(true),
                 _ => None,
-            })
-            .unwrap_or(false);
+            });
 
         let env_reasoning_effort = env::var("AI_REASONING_EFFORT")
             .ok()
@@ -176,14 +275,24 @@ impl Config {
             .and_then(|v| match v.to_lowercase().as_str() {
                 "true" | "1" | "yes" => Some(true),
                 _ => None,
-            })
-            .unwrap_or(false);
+            });
 
-        // Determine final values with CLI args taking precedence
-        let final_reasoning_enabled = args.reasoning_enabled || env_reasoning_enabled;
-        let final_reasoning_effort = args.reasoning_effort.clone().or(env_reasoning_effort);
-        let final_reasoning_max_tokens = args.reasoning_max_tokens.or(env_reasoning_max_tokens);
-        let final_reasoning_exclude = args.reasoning_exclude || env_reasoning_exclude;
+        // Determine final values: CLI args > env vars > JSON config
+        let final_reasoning_enabled = args.reasoning_enabled || 
+            env_reasoning_enabled.unwrap_or(false) || 
+            json_reasoning.enabled.unwrap_or(false);
+            
+        let final_reasoning_effort = args.reasoning_effort.clone()
+            .or(env_reasoning_effort)
+            .or(json_reasoning.effort.clone());
+            
+        let final_reasoning_max_tokens = args.reasoning_max_tokens
+            .or(env_reasoning_max_tokens)
+            .or(json_reasoning.max_tokens);
+            
+        let final_reasoning_exclude = args.reasoning_exclude || 
+            env_reasoning_exclude.unwrap_or(false) || 
+            json_reasoning.exclude.unwrap_or(false);
 
         if final_reasoning_enabled
             || final_reasoning_effort.is_some()
@@ -215,7 +324,7 @@ impl Config {
     }
 }
 
-impl McpConfig {
+impl JsonConfig {
     pub fn load() -> Result<Self> {
         let config_paths = Self::get_config_paths();
         
@@ -224,7 +333,7 @@ impl McpConfig {
                 let contents = fs::read_to_string(&path)
                     .with_context(|| format!("Failed to read config file: {}", path.display()))?;
                 
-                let config: McpConfig = serde_json::from_str(&contents)
+                let config: JsonConfig = serde_json::from_str(&contents)
                     .with_context(|| format!("Failed to parse config file: {}", path.display()))?;
                 
                 return Ok(config);
@@ -232,7 +341,7 @@ impl McpConfig {
         }
         
         // No config file found, return default
-        Ok(McpConfig::default())
+        Ok(JsonConfig::default())
     }
     
     pub fn get_config_paths() -> Vec<PathBuf> {
@@ -248,7 +357,9 @@ impl McpConfig {
         
         paths
     }
-    
+}
+
+impl McpConfig {
     pub fn get_enabled_servers(&self) -> Vec<&ServerConfig> {
         self.servers
             .iter()
