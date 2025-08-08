@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub struct Config {
     pub api_key: String,
@@ -184,10 +184,6 @@ impl Config {
     pub fn get_current_date() -> String {
         chrono::Local::now().format("%A, %B %d, %Y").to_string()
     }
-
-    pub fn get_search_date() -> String {
-        chrono::Local::now().format("%B %d, %Y").to_string()
-    }
 }
 
 impl McpConfig {
@@ -224,67 +220,10 @@ impl McpConfig {
         paths
     }
     
-    pub fn save(&self, path: &Path) -> Result<()> {
-        let contents = serde_json::to_string_pretty(self)
-            .context("Failed to serialize config")?;
-        
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create config directory: {}", parent.display()))?;
-        }
-        
-        fs::write(path, contents)
-            .with_context(|| format!("Failed to write config file: {}", path.display()))?;
-        
-        Ok(())
-    }
-    
     pub fn get_enabled_servers(&self) -> Vec<&ServerConfig> {
         self.servers
             .iter()
             .filter(|s| s.enabled)
-            .collect()
-    }
-    
-    pub fn detect_servers_for_query(&self, query: &str) -> Vec<&ServerConfig> {
-        if !self.settings.auto_detect {
-            return Vec::new();
-        }
-        
-        let enabled_servers = self.get_enabled_servers();
-        let query_lower = query.to_lowercase();
-        let mut scored_servers: Vec<(&ServerConfig, f64)> = Vec::new();
-        
-        for server in enabled_servers {
-            if server.auto_activate_keywords.is_empty() {
-                continue;
-            }
-            
-            let mut matches = 0;
-            let mut total_keywords = 0;
-            for keyword in &server.auto_activate_keywords {
-                total_keywords += 1;
-                // Check for word boundary matches to avoid false positives
-                let keyword_lower = keyword.to_lowercase();
-                if query_lower.contains(&keyword_lower) {
-                    matches += 1;
-                }
-            }
-            
-            if matches > 0 {
-                let score = matches as f64 / total_keywords as f64;
-                if score >= self.tool_selection.min_match_score {
-                    scored_servers.push((server, score));
-                }
-            }
-        }
-        
-        // Sort by score (highest first) and take top N
-        scored_servers.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        scored_servers
-            .into_iter()
-            .take(self.tool_selection.max_servers)
-            .map(|(server, _)| server)
             .collect()
     }
     

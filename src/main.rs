@@ -9,7 +9,6 @@ use clap::Parser;
 use colored::*;
 use futures::StreamExt;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
-use serde_json::json;
 use std::io::{self, Write};
 use std::process;
 use tokio::time::{timeout, Duration};
@@ -529,14 +528,6 @@ fn print_usage() {
     eprintln!("{}", "Usage: ai [OPTIONS] <command>".red());
     eprintln!(
         "{}",
-        "  -s, --search               Force web search".dimmed()
-    );
-    eprintln!(
-        "{}",
-        "      --no-search            Disable web search".dimmed()
-    );
-    eprintln!(
-        "{}",
         "  -n, --new                  Start a new conversation".dimmed()
     );
     eprintln!(
@@ -562,6 +553,22 @@ fn print_usage() {
     eprintln!(
         "{}",
         "      --reasoning-enabled    Enable reasoning with default parameters".dimmed()
+    );
+    eprintln!(
+        "{}",
+        "      --mcp-server           Connect to MCP server (format: name:command:arg1,arg2,...)".dimmed()
+    );
+    eprintln!(
+        "{}",
+        "      --no-tools             Disable MCP tools for this query".dimmed()
+    );
+    eprintln!(
+        "{}",
+        "      --config-init          Initialize a config file with example MCP servers".dimmed()
+    );
+    eprintln!(
+        "{}",
+        "  -h, --help                 Print help".dimmed()
     );
 }
 
@@ -589,7 +596,6 @@ async fn make_api_request(
 
 struct StreamingResult {
     content: String,
-    tool_calls: Vec<serde_json::Value>,
 }
 
 async fn process_streaming_response(
@@ -610,7 +616,6 @@ async fn process_streaming_response(
     let mut reasoning_buffer = String::new();
     let mut reasoning_displayed = false;
     let chunk_timeout = Duration::from_secs(timeout_secs);
-    let mut tool_calls: Vec<serde_json::Value> = Vec::new();
 
     loop {
         match timeout(chunk_timeout, stream.next()).await {
@@ -705,7 +710,6 @@ async fn process_streaming_response(
 
                             return Ok(StreamingResult {
                                 content: assistant_response,
-                                tool_calls,
                             });
                         }
 
@@ -743,18 +747,7 @@ async fn process_streaming_response(
                                                 }
                                             }
 
-                                            // Process tool calls
-                                            if let Some(delta_tool_calls) = &delta.tool_calls {
-                                                for tc in delta_tool_calls {
-                                                    // Accumulate tool call data
-                                                    if let Ok(tc_json) = serde_json::to_value(tc) {
-                                                        tool_calls.push(tc_json.clone());
-                                                        if verbose {
-                                                            eprintln!("{}", format!("[AI] Tool call detected: {:?}", tc_json).dimmed());
-                                                        }
-                                                    }
-                                                }
-                                            }
+                                            // Tool calls are not processed in streaming mode
                                             
                                             // Process content
                                             if let Some(content) = delta.content {
@@ -864,6 +857,5 @@ async fn process_streaming_response(
 
     Ok(StreamingResult {
         content: assistant_response,
-        tool_calls,
     })
 }

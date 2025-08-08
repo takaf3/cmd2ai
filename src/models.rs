@@ -76,6 +76,7 @@ pub struct Delta {
     pub content: Option<String>,
     pub annotations: Option<Vec<Annotation>>,
     pub reasoning: Option<String>,
+    #[allow(dead_code)]
     pub tool_calls: Option<Vec<ToolCall>>,
 }
 
