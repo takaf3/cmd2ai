@@ -107,22 +107,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             servers_to_connect.push((server_name, command, server_args, std::collections::HashMap::new()));
         }
         
-        // Auto-detect servers from config if auto_tools is set or use_tools is set with no explicit servers
-        if args.auto_tools || (args.use_tools && servers_to_connect.is_empty()) {
+        // Auto-detect servers from config - now the default behavior unless --no-tools is set
+        let should_use_tools = !args.no_tools;  // Tools are on by default unless explicitly disabled
+        
+        if should_use_tools && servers_to_connect.is_empty() {
             if config.verbose {
-                eprintln!("{}", format!("[AI] Loading MCP servers from config (auto-tools mode)").dimmed());
+                eprintln!("{}", format!("[AI] Loading MCP servers from config").dimmed());
                 eprintln!("{}", format!("[AI] Available servers in config: {}", config.mcp_config.servers.len()).dimmed());
             }
             
-            // When auto-tools is used, connect to ALL enabled servers
-            // Let the AI decide which tools to use based on the query
-            let servers_to_use = if args.auto_tools {
-                // Auto-tools: Use ALL enabled servers, let AI decide
-                config.mcp_config.get_enabled_servers()
-            } else {
-                // Use-tools without explicit servers: Try keyword detection
-                config.mcp_config.detect_servers_for_query(&command)
-            };
+            // Default behavior: Use ALL enabled servers, let AI decide which tools to use
+            let servers_to_use = config.mcp_config.get_enabled_servers();
             
             if config.verbose {
                 if servers_to_use.is_empty() {
@@ -242,8 +237,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Get available tools if MCP is enabled and use_tools or auto_tools flag is set
-    let tools = if (args.use_tools || args.auto_tools) && mcp_client.is_some() {
+    // Get available tools unless explicitly disabled with --no-tools
+    let tools = if !args.no_tools && mcp_client.is_some() {
         if let Some(ref client) = mcp_client {
             let mcp_tools = client.list_tools().await;
             if !mcp_tools.is_empty() {

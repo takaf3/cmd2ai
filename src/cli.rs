@@ -50,15 +50,21 @@ pub struct Args {
 
     #[arg(
         long = "use-tools",
-        help = "Enable MCP tool usage in AI responses"
+        help = "Enable MCP tool usage in AI responses (deprecated, tools are now on by default)"
     )]
     pub use_tools: bool,
 
     #[arg(
-        long = "auto-tools",
-        help = "Automatically detect and use appropriate MCP tools based on query"
+        long = "auto-tools", 
+        help = "Automatically detect and use appropriate MCP tools (deprecated, this is now the default)"
     )]
     pub auto_tools: bool,
+    
+    #[arg(
+        long = "no-tools",
+        help = "Disable MCP tools for this query"
+    )]
+    pub no_tools: bool,
 
     #[arg(
         long = "config-init",
