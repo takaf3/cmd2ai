@@ -4,11 +4,6 @@ use clap::Parser;
 #[command(name = "ai")]
 #[command(about = "AI command-line tool using OpenRouter API", long_about = None)]
 pub struct Args {
-    #[arg(short = 's', long = "search", help = "Force web search")]
-    pub force_search: bool,
-
-    #[arg(long = "no-search", help = "Disable web search")]
-    pub no_search: bool,
 
     #[arg(short = 'n', long = "new", help = "Start a new conversation")]
     pub new_conversation: bool,
@@ -46,6 +41,42 @@ pub struct Args {
         help = "Enable reasoning with default parameters"
     )]
     pub reasoning_enabled: bool,
+
+    #[arg(
+        long = "mcp-server",
+        help = "Connect to MCP server (format: name:command:arg1,arg2,...)"
+    )]
+    pub mcp_servers: Vec<String>,
+
+    #[arg(
+        long = "use-tools",
+        help = "Enable MCP tool usage in AI responses (deprecated, tools are now on by default)"
+    )]
+    pub use_tools: bool,
+
+    #[arg(
+        long = "auto-tools", 
+        help = "Automatically detect and use appropriate MCP tools (deprecated, this is now the default)"
+    )]
+    pub auto_tools: bool,
+    
+    #[arg(
+        long = "no-tools",
+        help = "Disable MCP tools for this query"
+    )]
+    pub no_tools: bool,
+
+    #[arg(
+        long = "config-init",
+        help = "Initialize a config file with example MCP servers"
+    )]
+    pub config_init: bool,
+
+    #[arg(
+        long = "api-endpoint",
+        help = "Custom API base URL (e.g., http://localhost:11434/v1)"
+    )]
+    pub api_endpoint: Option<String>,
 
     #[arg(help = "Command to send to AI")]
     pub command: Vec<String>,

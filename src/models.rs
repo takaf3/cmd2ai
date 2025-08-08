@@ -1,9 +1,29 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Message {
     pub role: String,
-    pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ToolCall {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub tool_type: String,
+    pub function: FunctionCall,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct FunctionCall {
+    pub name: String,
+    pub arguments: String,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -13,14 +33,7 @@ pub struct Session {
     pub messages: Vec<Message>,
 }
 
-#[derive(Serialize)]
-pub struct WebPlugin {
-    pub id: String,
-    pub max_results: u32,
-    pub search_prompt: String,
-}
-
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct Reasoning {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
@@ -38,9 +51,9 @@ pub struct RequestBody {
     pub messages: Vec<Message>,
     pub stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub plugins: Option<Vec<WebPlugin>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<Reasoning>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<Value>>,
 }
 
 #[derive(Deserialize)]
@@ -63,6 +76,8 @@ pub struct Delta {
     pub content: Option<String>,
     pub annotations: Option<Vec<Annotation>>,
     pub reasoning: Option<String>,
+    #[allow(dead_code)]
+    pub tool_calls: Option<Vec<ToolCall>>,
 }
 
 #[derive(Deserialize)]
