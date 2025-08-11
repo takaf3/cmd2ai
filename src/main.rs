@@ -104,7 +104,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 vec![]
             };
             
-            servers_to_connect.push((server_name, command, server_args, std::collections::HashMap::new()));
+            let expanded_args = config::McpConfig::expand_args(&server_args);
+            servers_to_connect.push((server_name, command, expanded_args, std::collections::HashMap::new()));
         }
         
         // Auto-detect servers from config - now the default behavior unless tools are disabled
@@ -133,10 +134,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 
                 let env_vars = config::McpConfig::expand_env_vars(&server.env);
+                let expanded_args = config::McpConfig::expand_args(&server.args);
                 servers_to_connect.push((
                     server.name.clone(),
                     server.command.clone(),
-                    server.args.clone(),
+                    expanded_args,
                     env_vars,
                 ));
             }
@@ -151,12 +153,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("{}", format!("Connecting to MCP server '{}'...", server_name).cyan());
                 }
                 
-                // Set environment variables for this server
-                for (key, value) in env_vars {
-                    std::env::set_var(key, value);
-                }
-                
-                if let Err(e) = client.connect_server(&server_name, &command, server_args).await {
+                if let Err(e) = client.connect_server(&server_name, &command, server_args, env_vars).await {
                     eprintln!("{} Failed to connect to MCP server '{}': {}", "Error:".red(), server_name, e);
                     process::exit(1);
                 }

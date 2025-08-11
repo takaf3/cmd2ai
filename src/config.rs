@@ -384,15 +384,29 @@ impl McpConfig {
         let mut expanded = HashMap::new();
         
         for (key, value) in env {
-            let expanded_value = if value.starts_with("${") && value.ends_with("}") {
-                let var_name = &value[2..value.len()-1];
-                env::var(var_name).unwrap_or_else(|_| value.clone())
-            } else {
-                value.clone()
-            };
+            let expanded_value = Self::expand_env_var_in_string(value);
             expanded.insert(key.clone(), expanded_value);
         }
         
         expanded
+    }
+    
+    pub fn expand_env_var_in_string(value: &str) -> String {
+        let mut result = value.to_string();
+        let re = regex::Regex::new(r"\$\{([^}]+)\}").unwrap();
+        
+        for cap in re.captures_iter(value) {
+            let var_name = &cap[1];
+            let replacement = env::var(var_name).unwrap_or_else(|_| format!("${{{}}}", var_name));
+            result = result.replace(&cap[0], &replacement);
+        }
+        
+        result
+    }
+    
+    pub fn expand_args(args: &[String]) -> Vec<String> {
+        args.iter()
+            .map(|arg| Self::expand_env_var_in_string(arg))
+            .collect()
     }
 }
