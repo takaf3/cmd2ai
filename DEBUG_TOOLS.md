@@ -41,13 +41,13 @@ This helps debug:
 ## Example Output
 
 ```
-Using model: openai/gpt-4o-mini
+Using model: openai/gpt-5
 Prompt: Hi
 Reasoning: Enabled
 --------------------------------------------------------------------------------
 Request payload:
 {
-  "model": "openai/gpt-4o-mini",
+  "model": "openai/gpt-5",
   "messages": [...],
   "stream": true,
   "reasoning": {

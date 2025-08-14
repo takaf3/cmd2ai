@@ -43,19 +43,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Handle --config-init option
     if args.config_init {
-        let example_config = include_str!("../config.example.json");
-        let config_path = std::path::PathBuf::from(".cmd2ai.json");
+        let example_config = include_str!("../config.example.yaml");
+        let config_path = std::path::PathBuf::from(".cmd2ai.yaml");
         
         if config_path.exists() {
-            eprintln!("{} Config file already exists at .cmd2ai.json", "Error:".red());
+            eprintln!("{} Config file already exists at .cmd2ai.yaml", "Error:".red());
             eprintln!("Use a different path or remove the existing file.");
             process::exit(1);
         }
         
         match std::fs::write(&config_path, example_config) {
             Ok(_) => {
-                println!("{}", "Config file created at .cmd2ai.json".green());
+                println!("{}", "Config file created at .cmd2ai.yaml".green());
                 println!("Edit this file to configure your MCP servers.");
+                println!("YAML format supports comments for better documentation!");
                 return Ok(());
             }
             Err(e) => {
@@ -103,11 +104,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 vec![]
             };
             
-            servers_to_connect.push((server_name, command, server_args, std::collections::HashMap::new()));
+            let expanded_args = config::McpConfig::expand_args(&server_args);
+            servers_to_connect.push((server_name, command, expanded_args, std::collections::HashMap::new()));
         }
         
-        // Auto-detect servers from config - now the default behavior unless --no-tools is set
-        let should_use_tools = !args.no_tools;  // Tools are on by default unless explicitly disabled
+        // Auto-detect servers from config - now the default behavior unless tools are disabled
+        let should_use_tools = !config.disable_tools;  // Tools are on by default unless explicitly disabled
         
         if should_use_tools && servers_to_connect.is_empty() {
             if config.verbose {
@@ -132,10 +134,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 
                 let env_vars = config::McpConfig::expand_env_vars(&server.env);
+                let expanded_args = config::McpConfig::expand_args(&server.args);
                 servers_to_connect.push((
                     server.name.clone(),
                     server.command.clone(),
-                    server.args.clone(),
+                    expanded_args,
                     env_vars,
                 ));
             }
@@ -150,12 +153,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("{}", format!("Connecting to MCP server '{}'...", server_name).cyan());
                 }
                 
-                // Set environment variables for this server
-                for (key, value) in env_vars {
-                    std::env::set_var(key, value);
-                }
-                
-                if let Err(e) = client.connect_server(&server_name, &command, server_args).await {
+                if let Err(e) = client.connect_server(&server_name, &command, server_args, env_vars).await {
                     eprintln!("{} Failed to connect to MCP server '{}': {}", "Error:".red(), server_name, e);
                     process::exit(1);
                 }
@@ -236,8 +234,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Get available tools unless explicitly disabled with --no-tools
-    let tools = if !args.no_tools && mcp_client.is_some() {
+    // Get available tools unless explicitly disabled
+    let tools = if !config.disable_tools && mcp_client.is_some() {
         if let Some(ref client) = mcp_client {
             let mcp_tools = client.list_tools().await;
             if !mcp_tools.is_empty() {

@@ -34,15 +34,21 @@ impl McpClient {
         server_name: &str,
         command: &str,
         args: Vec<String>,
+        env_vars: HashMap<String, String>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Start the MCP server process
         let mut cmd = Command::new(command);
-        let process = cmd
-            .args(args)
+        cmd.args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()?;
+            .stderr(Stdio::null());
+        
+        // Set environment variables for the child process
+        for (key, value) in env_vars {
+            cmd.env(key, value);
+        }
+        
+        let process = cmd.spawn()?;
 
         let mut server = McpServer {
             process,
