@@ -32,13 +32,13 @@ impl CodeBuffer {
         if text.starts_with("```") {
             return Some(0);
         }
-        
+
         // Look for \n``` in the text
         if let Some(pos) = text.find("\n```") {
             // Return position of the backticks (after the newline)
             return Some(pos + 1);
         }
-        
+
         None
     }
 
@@ -126,12 +126,14 @@ impl CodeBuffer {
                         if !remaining_lines.is_empty() {
                             let remaining_content = remaining_lines.join("\n");
                             // Add final newline only if the original content had one
-                            let final_content = if self.code_block_content.ends_with('\n') || code_end > 0 {
-                                remaining_content + "\n"
-                            } else {
-                                remaining_content
-                            };
-                            let highlighted = self.highlight_code(&final_content, self.code_block_lang.as_deref());
+                            let final_content =
+                                if self.code_block_content.ends_with('\n') || code_end > 0 {
+                                    remaining_content + "\n"
+                                } else {
+                                    remaining_content
+                                };
+                            let highlighted = self
+                                .highlight_code(&final_content, self.code_block_lang.as_deref());
                             output.push_str(&highlighted);
                         }
                     }
@@ -144,12 +146,12 @@ impl CodeBuffer {
 
                     // Consume the closing ``` and check what comes after
                     let after_marker = &self.buffer[code_end + 3..];
-                    
+
                     // Only add newline after footer if there's content following or a newline
                     if !after_marker.is_empty() {
                         output.push('\n');
                     }
-                    
+
                     // Reset state
                     self.buffer = after_marker.to_string();
                     self.in_code_block = false;
@@ -159,35 +161,37 @@ impl CodeBuffer {
                 } else {
                     // Still in code block, accumulate content and highlight incrementally
                     self.code_block_content.push_str(&self.buffer);
-                    
+
                     // Count complete lines in the accumulated content
                     let complete_lines: Vec<&str> = self.code_block_content.lines().collect();
                     let total_lines = complete_lines.len();
-                    
+
                     // Check if the last line is incomplete (doesn't end with newline)
-                    let has_incomplete_last_line = !self.code_block_content.ends_with('\n') 
-                        && !self.buffer.is_empty();
-                    
+                    let has_incomplete_last_line =
+                        !self.code_block_content.ends_with('\n') && !self.buffer.is_empty();
+
                     // Determine how many lines to display
                     let lines_to_display = if has_incomplete_last_line && total_lines > 0 {
-                        total_lines - 1  // Don't display the incomplete last line yet
+                        total_lines - 1 // Don't display the incomplete last line yet
                     } else {
                         total_lines
                     };
-                    
+
                     // Check if we have new complete lines to display
                     if lines_to_display > self.displayed_lines {
                         // Highlight only the new complete lines
-                        let new_lines: Vec<&str> = complete_lines[self.displayed_lines..lines_to_display].to_vec();
-                        
+                        let new_lines: Vec<&str> =
+                            complete_lines[self.displayed_lines..lines_to_display].to_vec();
+
                         if !new_lines.is_empty() {
                             let new_content = new_lines.join("\n") + "\n";
-                            let highlighted = self.highlight_code(&new_content, self.code_block_lang.as_deref());
+                            let highlighted =
+                                self.highlight_code(&new_content, self.code_block_lang.as_deref());
                             output.push_str(&highlighted);
                             self.displayed_lines = lines_to_display;
                         }
                     }
-                    
+
                     self.buffer.clear();
                     break;
                 }
@@ -215,7 +219,8 @@ impl CodeBuffer {
                         } else {
                             remaining_content
                         };
-                        let highlighted = self.highlight_code(&final_content, self.code_block_lang.as_deref());
+                        let highlighted =
+                            self.highlight_code(&final_content, self.code_block_lang.as_deref());
                         output.push_str(&highlighted);
                     }
                 }

@@ -4,7 +4,6 @@ use clap::Parser;
 #[command(name = "ai")]
 #[command(about = "AI command-line tool using OpenRouter API", long_about = None)]
 pub struct Args {
-
     #[arg(short = 'n', long = "new", help = "Start a new conversation")]
     pub new_conversation: bool,
 
@@ -55,15 +54,12 @@ pub struct Args {
     pub use_tools: bool,
 
     #[arg(
-        long = "auto-tools", 
+        long = "auto-tools",
         help = "Automatically detect and use appropriate MCP tools (deprecated, this is now the default)"
     )]
     pub auto_tools: bool,
-    
-    #[arg(
-        long = "no-tools",
-        help = "Disable MCP tools for this query"
-    )]
+
+    #[arg(long = "no-tools", help = "Disable MCP tools for this query")]
     pub no_tools: bool,
 
     #[arg(

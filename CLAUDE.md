@@ -27,6 +27,9 @@ cargo run --bin ai -- --no-tools "What is 2+2?"
 
 # Initialize MCP config file
 cargo run --bin ai -- --config-init
+
+# Debug streaming with raw SSE output (check-raw binary)
+cargo run --bin check-raw -- "your prompt" [--reasoning]
 ```
 
 ### Installation
@@ -47,6 +50,8 @@ make dev
 make test
 ```
 
+**ZSH Widget**: The installation includes `ai-widget.zsh` which intercepts commands starting with capital letters and routes them to the AI. Add to `~/.zshrc`: `source ~/.config/zsh/functions/ai-widget.zsh`
+
 ### Code Quality
 ```bash
 # Format code
@@ -63,6 +68,12 @@ make check
 ```
 
 ## Architecture & Key Components
+
+### Project Structure
+
+The codebase contains two binary targets:
+- **`ai`** (`src/main.rs`): Main CLI application with full features
+- **`check-raw`** (`src/bin/check_raw.rs`): Debugging tool that displays raw SSE streams from the API
 
 ### High-Level Architecture
 
@@ -83,10 +94,10 @@ User Input → CLI Args → Config Loading → MCP Server Detection → API Requ
    - Stage 2: AI-based tool selection (AI decides which specific tools to call)
    This provides both efficiency (only connecting to relevant servers) and intelligence (AI chooses appropriate tools).
 
-3. **Configuration Hierarchy**: 
-   - Local `.cmd2ai.json` overrides global `~/.config/cmd2ai/cmd2ai.json`
-   - Command-line args override all config files
-   - Environment variables provide defaults
+3. **Configuration Hierarchy**:
+   - Priority: CLI args > Env vars > Local config > Global config > Defaults
+   - Supports both YAML (`.cmd2ai.yaml`) and JSON (`.cmd2ai.json`) formats
+   - YAML is preferred for its inline comment support
 
 ### Core Components
 
@@ -98,9 +109,9 @@ User Input → CLI Args → Config Loading → MCP Server Detection → API Requ
 
 **Config System (`src/config.rs`)**:
 - `Config`: Runtime configuration from env vars and CLI args
-- `McpConfig`: MCP server definitions loaded from JSON files
-- Automatic server detection based on keywords (now default behavior)
-- Priority: CLI args > Local config > Global config > Env vars
+- `McpConfig`: MCP server definitions loaded from YAML/JSON files
+- Automatic server detection based on keywords (default behavior)
+- Supports regex patterns for environment variable expansion (`${VAR_NAME}`)
 - API endpoint normalization (auto-appends `/chat/completions`)
 
 **MCP Client (`src/mcp/`)**:
@@ -115,9 +126,9 @@ User Input → CLI Args → Config Loading → MCP Server Detection → API Requ
 - Applies syntax highlighting in real-time using syntect
 
 **Session Management (`src/session.rs`)**:
-- Maintains conversation history in `~/.ai_sessions/`
-- Auto-continues conversations within 1-hour window
-- Trims history to stay within token limits
+- Maintains conversation history in `~/.cache/cmd2ai/`
+- Auto-continues conversations within 30-minute window
+- Keeps last 3 exchanges (6 messages) to stay within token limits
 
 ### Critical Implementation Details
 
@@ -131,10 +142,10 @@ User Input → CLI Args → Config Loading → MCP Server Detection → API Requ
 - Configurable via `--api-endpoint` CLI arg or `AI_API_ENDPOINT` env var
 - Automatically appends `/chat/completions` to base URLs ending with `/v1`
 
-**MCP Configuration (`config.example.json`)**:
+**MCP Configuration**:
 - `auto_activate_keywords`: Must match with sufficient score (default 0.3 threshold)
 - `enabled`: Server-level flag to disable without removing configuration
-- Environment variables use `${VAR_NAME}` syntax for expansion
+- Environment variables use `${VAR_NAME}` syntax for expansion (supports regex patterns)
 
 **Tool Call Processing**:
 When tools are available, the main loop in `main.rs`:
@@ -145,15 +156,15 @@ When tools are available, the main loop in `main.rs`:
 5. Repeats until no more tool calls
 
 **Session Files**:
-- Location: `~/.ai_sessions/session_*.json`
+- Location: `~/.cache/cmd2ai/session-*.json`
 - Format: JSON with messages array and metadata
-- Auto-cleanup: Files older than 30 days are deleted
-- Token limit: Automatically trims older messages to stay under limits
+- Auto-cleanup: Expired sessions (>30 minutes) are deleted when encountered
+- Token management: Keeps last 3 exchanges (6 messages) automatically
 
 ### Configuration
 
-Configuration can be set via JSON config files, environment variables, or command-line arguments. The priority order is:
-**CLI args > Environment variables > JSON config > Defaults**
+Configuration can be set via YAML/JSON config files, environment variables, or command-line arguments. The priority order is:
+**CLI args > Environment variables > Local config > Global config > Defaults**
 
 #### Config File Locations (priority order)
 1. `.cmd2ai.yaml` or `.cmd2ai.yml` (local project config)
@@ -229,7 +240,7 @@ Optional (override JSON config):
 
 ### Configuration Migration
 
-A migration script is provided to convert existing environment variables to JSON configuration:
+A migration script (`migrate_config.sh`) converts environment variables to YAML configuration:
 
 ```bash
 # Show current env vars and generate config (dry run)

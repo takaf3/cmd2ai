@@ -45,13 +45,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.config_init {
         let example_config = include_str!("../config.example.yaml");
         let config_path = std::path::PathBuf::from(".cmd2ai.yaml");
-        
+
         if config_path.exists() {
-            eprintln!("{} Config file already exists at .cmd2ai.yaml", "Error:".red());
+            eprintln!(
+                "{} Config file already exists at .cmd2ai.yaml",
+                "Error:".red()
+            );
             eprintln!("Use a different path or remove the existing file.");
             process::exit(1);
         }
-        
+
         match std::fs::write(&config_path, example_config) {
             Ok(_) => {
                 println!("{}", "Config file created at .cmd2ai.yaml".green());
@@ -85,16 +88,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize MCP client with servers from command line and/or config
     let mcp_client = {
         let mut servers_to_connect = Vec::new();
-        
+
         // First, add servers from command line arguments
         for server_spec in &args.mcp_servers {
             let parts: Vec<&str> = server_spec.splitn(3, ':').collect();
             if parts.len() < 2 {
-                eprintln!("{} Invalid MCP server format: {}", "Error:".red(), server_spec);
+                eprintln!(
+                    "{} Invalid MCP server format: {}",
+                    "Error:".red(),
+                    server_spec
+                );
                 eprintln!("Expected format: name:command or name:command:arg1,arg2,...");
                 process::exit(1);
             }
-            
+
             let server_name = parts[0].to_string();
             let command = parts[1].to_string();
             let args_str = if parts.len() > 2 { parts[2] } else { "" };
@@ -103,36 +110,78 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 vec![]
             };
-            
+
             let expanded_args = config::McpConfig::expand_args(&server_args);
-            servers_to_connect.push((server_name, command, expanded_args, std::collections::HashMap::new()));
+            servers_to_connect.push((
+                server_name,
+                command,
+                expanded_args,
+                std::collections::HashMap::new(),
+            ));
         }
-        
+
         // Auto-detect servers from config - now the default behavior unless tools are disabled
-        let should_use_tools = !config.disable_tools;  // Tools are on by default unless explicitly disabled
-        
+        let should_use_tools = !config.disable_tools; // Tools are on by default unless explicitly disabled
+
         if should_use_tools && servers_to_connect.is_empty() {
             if config.verbose {
-                eprintln!("{}", format!("[AI] Loading MCP servers from config").dimmed());
-                eprintln!("{}", format!("[AI] Available servers in config: {}", config.mcp_config.servers.len()).dimmed());
+                eprintln!(
+                    "{}",
+                    format!("[AI] Loading MCP servers from config").dimmed()
+                );
+                eprintln!(
+                    "{}",
+                    format!(
+                        "[AI] Available servers in config: {}",
+                        config.mcp_config.servers.len()
+                    )
+                    .dimmed()
+                );
             }
-            
-            // Default behavior: Use ALL enabled servers, let AI decide which tools to use
-            let servers_to_use = config.mcp_config.get_enabled_servers();
-            
+
+            // Use keyword-based server selection if auto_detect is enabled
+            let servers_to_use = if config.mcp_config.settings.auto_detect {
+                let selected = config.mcp_config.select_servers_by_keywords(&command);
+                if config.verbose {
+                    if selected.is_empty() {
+                        eprintln!("{}", "[AI] No servers matched keywords in query".dimmed());
+                    } else {
+                        eprintln!(
+                            "{}",
+                            format!(
+                                "[AI] Selected {} server(s) based on keywords",
+                                selected.len()
+                            )
+                            .dimmed()
+                        );
+                    }
+                }
+                selected
+            } else {
+                // Fallback: use all enabled servers
+                config.mcp_config.get_enabled_servers()
+            };
+
             if config.verbose {
                 if servers_to_use.is_empty() {
                     eprintln!("{}", "[AI] No enabled MCP servers found".dimmed());
                 } else {
-                    eprintln!("{}", format!("[AI] Connecting to {} MCP server(s)", servers_to_use.len()).dimmed());
+                    eprintln!(
+                        "{}",
+                        format!("[AI] Connecting to {} MCP server(s)", servers_to_use.len())
+                            .dimmed()
+                    );
                 }
             }
-            
+
             for server in servers_to_use {
                 if config.verbose {
-                    eprintln!("{}", format!("[AI] - {} ({})", server.name, server.description).dimmed());
+                    eprintln!(
+                        "{}",
+                        format!("[AI] - {} ({})", server.name, server.description).dimmed()
+                    );
                 }
-                
+
                 let env_vars = config::McpConfig::expand_env_vars(&server.env);
                 let expanded_args = config::McpConfig::expand_args(&server.args);
                 servers_to_connect.push((
@@ -143,22 +192,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ));
             }
         }
-        
+
         // Connect to servers if any were specified or detected
         if !servers_to_connect.is_empty() {
             let client = McpClient::new(config.verbose);
-            
+
             for (server_name, command, server_args, env_vars) in servers_to_connect {
                 if config.verbose {
-                    println!("{}", format!("Connecting to MCP server '{}'...", server_name).cyan());
+                    println!(
+                        "{}",
+                        format!("Connecting to MCP server '{}'...", server_name).cyan()
+                    );
                 }
-                
-                if let Err(e) = client.connect_server(&server_name, &command, server_args, env_vars).await {
-                    eprintln!("{} Failed to connect to MCP server '{}': {}", "Error:".red(), server_name, e);
+
+                if let Err(e) = client
+                    .connect_server(&server_name, &command, server_args, env_vars)
+                    .await
+                {
+                    eprintln!(
+                        "{} Failed to connect to MCP server '{}': {}",
+                        "Error:".red(),
+                        server_name,
+                        e
+                    );
                     process::exit(1);
                 }
             }
-            
+
             Some(client)
         } else {
             None
@@ -237,10 +297,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Get available tools unless explicitly disabled
     let tools = if !config.disable_tools && mcp_client.is_some() {
         if let Some(ref client) = mcp_client {
+            // Refresh tools before listing to catch any updates
+            if let Err(e) = client.refresh_tools().await {
+                if config.verbose {
+                    eprintln!(
+                        "{}",
+                        format!("[AI] Warning: Failed to refresh tools: {}", e).dimmed()
+                    );
+                }
+            }
+
             let mcp_tools = client.list_tools().await;
             if !mcp_tools.is_empty() {
                 if config.verbose {
-                    println!("{}", format!("Available MCP tools: {}", mcp_tools.len()).cyan());
+                    println!(
+                        "{}",
+                        format!("Available MCP tools: {}", mcp_tools.len()).cyan()
+                    );
                 }
                 Some(mcp::tools::format_tools_for_llm(&mcp_tools))
             } else {
@@ -256,7 +329,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Use non-streaming when tools are available for proper tool handling
     // OpenRouter's streaming API doesn't properly stream tool call arguments
     let use_streaming = tools.is_none();
-    
+
     let request_body = RequestBody {
         model: final_model.clone(),
         messages: messages.clone(),
@@ -264,10 +337,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         reasoning: config.reasoning.clone(),
         tools: tools.clone(),
     };
-    
+
     // Debug: Print tools being sent
     if config.verbose && tools.is_some() {
-        eprintln!("{}", "[AI] Sending tools to model for function calling".dimmed());
+        eprintln!(
+            "{}",
+            "[AI] Sending tools to model for function calling".dimmed()
+        );
     }
 
     if config.verbose {
@@ -281,7 +357,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let response = make_api_request(&config.api_key, &config.api_endpoint, &request_body).await?;
 
     if config.verbose {
-        eprintln!("{}", format!("[AI] Response status: {}", response.status()).dimmed());
+        eprintln!(
+            "{}",
+            format!("[AI] Response status: {}", response.status()).dimmed()
+        );
     }
 
     if !response.status().is_success() {
@@ -306,99 +385,160 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             config.verbose,
         )
         .await?;
-        
+
         streaming_result.content
     } else {
         // Non-streaming path - handle tools properly
         let response_text = response.text().await?;
         if config.verbose {
-            eprintln!("{}", format!("[AI] Raw response: {}", response_text).dimmed());
+            eprintln!(
+                "{}",
+                format!("[AI] Raw response: {}", response_text).dimmed()
+            );
         }
-        
+
         // Parse the response
         let response_json: serde_json::Value = serde_json::from_str(&response_text)?;
-        
+
         // Process the non-streaming response with tool handling
         if let Some(choices) = response_json.get("choices").and_then(|c| c.as_array()) {
             if let Some(first_choice) = choices.first() {
                 // Check for reasoning content first
-                if let Some(reasoning_content) = first_choice.get("message")
+                if let Some(reasoning_content) = first_choice
+                    .get("message")
                     .and_then(|m| m.get("reasoning_content"))
-                    .and_then(|r| r.as_str()) {
-                    
+                    .and_then(|r| r.as_str())
+                {
                     if !args.reasoning_exclude && !reasoning_content.is_empty() {
                         println!();
-                        println!("{}", format!("{}[{}]{}", "┌─".dimmed(), "REASONING".cyan().bold(), "──────────────────────────────────────────────".dimmed()));
-                        let display_reasoning = reasoning_content
-                            .replace("**", "")
-                            .trim()
-                            .to_string();
+                        println!(
+                            "{}",
+                            format!(
+                                "{}[{}]{}",
+                                "┌─".dimmed(),
+                                "REASONING".cyan().bold(),
+                                "──────────────────────────────────────────────".dimmed()
+                            )
+                        );
+                        let display_reasoning =
+                            reasoning_content.replace("**", "").trim().to_string();
                         println!("{}", display_reasoning.dimmed());
-                        println!("{}", "└──────────────────────────────────────────────────────────".dimmed());
+                        println!(
+                            "{}",
+                            "└──────────────────────────────────────────────────────────".dimmed()
+                        );
                         println!();
                     }
                 }
-                
+
                 if let Some(message) = first_choice.get("message") {
                     // Check if there are tool calls
-                    if let Some(tool_calls) = message.get("tool_calls").and_then(|tc| tc.as_array()) {
+                    if let Some(tool_calls) = message.get("tool_calls").and_then(|tc| tc.as_array())
+                    {
                         if !tool_calls.is_empty() {
                             if config.verbose {
                                 println!("{}", "Executing tools...".cyan());
                             }
-                            
-                            // Execute each tool call
+
+                            // Execute tool calls (structured for parallel execution)
+                            // Note: Currently sequential due to client borrowing constraints
+                            // The client's internal state is Arc-wrapped, but the client itself needs refactoring for true parallelism
                             let mut tool_results = Vec::new();
+
                             for tool_call in tool_calls {
                                 if let (Some(id), Some(function)) = (
                                     tool_call.get("id").and_then(|i| i.as_str()),
-                                    tool_call.get("function")
+                                    tool_call.get("function"),
                                 ) {
                                     if let (Some(name), Some(arguments_str)) = (
                                         function.get("name").and_then(|n| n.as_str()),
-                                        function.get("arguments").and_then(|a| a.as_str())
+                                        function.get("arguments").and_then(|a| a.as_str()),
                                     ) {
                                         println!("{}", format!("Calling tool: {}...", name).cyan());
-                                        
+
                                         // Parse arguments
-                                        if let Ok(arguments) = serde_json::from_str::<serde_json::Value>(arguments_str) {
-                                            // Execute tool via MCP
-                                            if let Some(ref client) = mcp_client {
-                                                let mcp_tool_call = mcp::McpToolCall {
-                                                    name: name.to_string(),
-                                                    arguments,
-                                                };
-                                                
-                                                match client.call_tool(&mcp_tool_call).await {
-                                                    Ok(result) => {
-                                                        if let Some(content) = result.content.first() {
-                                                            println!("{}", content.text);
-                                                            
-                                                            // Store the result to send back to the AI
+                                        match serde_json::from_str::<serde_json::Value>(
+                                            arguments_str,
+                                        ) {
+                                            Ok(arguments) => {
+                                                // Execute tool via MCP
+                                                if let Some(ref client) = mcp_client {
+                                                    let mcp_tool_call = mcp::McpToolCall {
+                                                        name: name.to_string(),
+                                                        arguments,
+                                                    };
+
+                                                    match client
+                                                        .call_tool(
+                                                            &mcp_tool_call,
+                                                            config.mcp_config.settings.timeout,
+                                                        )
+                                                        .await
+                                                    {
+                                                        Ok(tool_result) => {
+                                                            // Aggregate all content items
+                                                            let mut aggregated_text = String::new();
+                                                            for (i, content) in tool_result
+                                                                .content
+                                                                .iter()
+                                                                .enumerate()
+                                                            {
+                                                                if i > 0 {
+                                                                    aggregated_text
+                                                                        .push_str("\n\n---\n\n");
+                                                                }
+                                                                aggregated_text
+                                                                    .push_str(&content.text);
+                                                                println!("{}", content.text);
+                                                            }
+
+                                                            if !aggregated_text.is_empty() {
+                                                                tool_results.push(Message {
+                                                                    role: "tool".to_string(),
+                                                                    content: Some(aggregated_text),
+                                                                    tool_calls: None,
+                                                                    tool_call_id: Some(
+                                                                        id.to_string(),
+                                                                    ),
+                                                                });
+                                                            }
+                                                        }
+                                                        Err(e) => {
+                                                            eprintln!(
+                                                                "{}",
+                                                                format!(
+                                                                    "Tool execution error: {}",
+                                                                    e
+                                                                )
+                                                                .red()
+                                                            );
                                                             tool_results.push(Message {
                                                                 role: "tool".to_string(),
-                                                                content: Some(content.text.clone()),
+                                                                content: Some(format!(
+                                                                    "Error: {}",
+                                                                    e
+                                                                )),
                                                                 tool_calls: None,
                                                                 tool_call_id: Some(id.to_string()),
                                                             });
                                                         }
                                                     }
-                                                    Err(e) => {
-                                                        eprintln!("{}", format!("Tool execution error: {}", e).red());
-                                                        tool_results.push(Message {
-                                                            role: "tool".to_string(),
-                                                            content: Some(format!("Error: {}", e)),
-                                                            tool_calls: None,
-                                                            tool_call_id: Some(id.to_string()),
-                                                        });
-                                                    }
                                                 }
+                                            }
+                                            Err(err) => {
+                                                eprintln!("{}", format!("Failed to parse arguments for tool '{}' : {}", name, err).red());
+                                                tool_results.push(Message {
+                                                    role: "tool".to_string(),
+                                                    content: Some(format!("Error: failed to parse arguments for tool '{}' : {}", name, err)),
+                                                    tool_calls: None,
+                                                    tool_call_id: Some(id.to_string()),
+                                                });
                                             }
                                         }
                                     }
                                 }
                             }
-                            
+
                             // If we executed tools, we need to send the results back and get a new response
                             if !tool_results.is_empty() {
                                 // Add the assistant's message with tool calls to the conversation
@@ -407,34 +547,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     .iter()
                                     .filter_map(|tc| serde_json::from_value(tc.clone()).ok())
                                     .collect();
-                                
+
                                 messages.push(Message {
                                     role: "assistant".to_string(),
-                                    content: message.get("content").and_then(|c| c.as_str()).map(|s| s.to_string()),
-                                    tool_calls: if tool_calls_typed.is_empty() { None } else { Some(tool_calls_typed) },
+                                    content: message
+                                        .get("content")
+                                        .and_then(|c| c.as_str())
+                                        .map(|s| s.to_string()),
+                                    tool_calls: if tool_calls_typed.is_empty() {
+                                        None
+                                    } else {
+                                        Some(tool_calls_typed)
+                                    },
                                     tool_call_id: None,
                                 });
-                                
+
                                 // Add tool results to the conversation
                                 for result in tool_results {
                                     messages.push(result);
                                 }
-                                
+
                                 // Make another API call to get the final response - NOW WITH STREAMING!
                                 let followup_request = RequestBody {
                                     model: final_model.clone(),
                                     messages: messages.clone(),
-                                    stream: true,  // Enable streaming for the final answer
+                                    stream: true, // Enable streaming for the final answer
                                     reasoning: config.reasoning.clone(),
-                                    tools: None,  // Don't send tools again for the final response
+                                    tools: None, // Don't send tools again for the final response
                                 };
-                                
+
                                 if config.verbose {
                                     eprintln!("{}", "[AI] Making follow-up request with tool results (streaming enabled)...".dimmed());
                                 }
-                                
-                                let followup_response = make_api_request(&config.api_key, &config.api_endpoint, &followup_request).await?;
-                                
+
+                                let followup_response = make_api_request(
+                                    &config.api_key,
+                                    &config.api_endpoint,
+                                    &followup_request,
+                                )
+                                .await?;
+
                                 if !followup_response.status().is_success() {
                                     let status = followup_response.status();
                                     let error_text = followup_response.text().await?;
@@ -446,7 +598,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     );
                                     process::exit(1);
                                 }
-                                
+
                                 // Process the follow-up STREAMING response for better UX
                                 let followup_result = process_streaming_response(
                                     followup_response,
@@ -455,16 +607,68 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     config.verbose,
                                 )
                                 .await?;
-                                
+
                                 // Return the final streamed response
                                 followup_result.content
                             } else {
-                                // No tool calls, return the content
-                                "Tools executed successfully".to_string()
+                                if let Some(original_content) =
+                                    message.get("content").and_then(|c| c.as_str())
+                                {
+                                    if config.verbose {
+                                        eprintln!(
+                                            "{}",
+                                            "[AI] Tool calls array was empty and no assistant content provided.".dimmed()
+                                        );
+                                    }
+
+                                    let mut code_buffer = highlight::CodeBuffer::new();
+                                    let formatted = code_buffer.append(original_content);
+                                    if !formatted.is_empty() {
+                                        print!("{}", formatted);
+                                    }
+                                    let remaining = code_buffer.flush();
+                                    if !remaining.is_empty() {
+                                        print!("{}", remaining.trim_end());
+                                    }
+                                    println!();
+                                    original_content.to_string()
+                                } else {
+                                    "Tool calls were requested but no results were returned."
+                                        .to_string()
+                                }
                             }
                         } else {
-                            // No tool calls, just return the content
-                            "No tool calls in response".to_string()
+                            // tool_calls exists but is empty - check for message content
+                            if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
+                                if config.verbose {
+                                    eprintln!(
+                                        "{}",
+                                        "[AI] tool_calls array is empty; using assistant message content.".dimmed()
+                                    );
+                                }
+
+                                // Use CodeBuffer to properly format the response with syntax highlighting
+                                let mut code_buffer = highlight::CodeBuffer::new();
+                                let formatted = code_buffer.append(content);
+                                if !formatted.is_empty() {
+                                    print!("{}", formatted);
+                                }
+                                let remaining = code_buffer.flush();
+                                if !remaining.is_empty() {
+                                    print!("{}", remaining.trim_end());
+                                }
+                                println!();
+                                content.to_string()
+                            } else {
+                                if config.verbose {
+                                    eprintln!(
+                                        "{}",
+                                        "[AI] tool_calls array is empty and no content provided."
+                                            .dimmed()
+                                    );
+                                }
+                                "No tool calls and no content in response".to_string()
+                            }
                         }
                     } else if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
                         // Use CodeBuffer to properly format the response with syntax highlighting
@@ -554,7 +758,8 @@ fn print_usage() {
     );
     eprintln!(
         "{}",
-        "      --mcp-server           Connect to MCP server (format: name:command:arg1,arg2,...)".dimmed()
+        "      --mcp-server           Connect to MCP server (format: name:command:arg1,arg2,...)"
+            .dimmed()
     );
     eprintln!(
         "{}",
@@ -566,12 +771,10 @@ fn print_usage() {
     );
     eprintln!(
         "{}",
-        "      --api-endpoint         Custom API base URL (e.g., http://localhost:11434/v1)".dimmed()
+        "      --api-endpoint         Custom API base URL (e.g., http://localhost:11434/v1)"
+            .dimmed()
     );
-    eprintln!(
-        "{}",
-        "  -h, --help                 Print help".dimmed()
-    );
+    eprintln!("{}", "  -h, --help                 Print help".dimmed());
 }
 
 async fn make_api_request(
@@ -590,11 +793,7 @@ async fn make_api_request(
         .default_headers(headers)
         .build()?;
 
-    client
-        .post(api_endpoint)
-        .json(&request_body)
-        .send()
-        .await
+    client.post(api_endpoint).json(&request_body).send().await
 }
 
 struct StreamingResult {
@@ -739,7 +938,7 @@ async fn process_streaming_response(
                                                         .replace("**", "")
                                                         .trim_end()
                                                         .to_string();
-                                                    
+
                                                     if !display_reasoning.is_empty() {
                                                         print!("{}", display_reasoning.dimmed());
                                                         if last_flush.elapsed() > flush_interval {
@@ -751,11 +950,14 @@ async fn process_streaming_response(
                                             }
 
                                             // Tool calls are not processed in streaming mode
-                                            
+
                                             // Process content
                                             if let Some(content) = delta.content {
                                                 // Only close reasoning block if we have actual content (not just empty string)
-                                                if reasoning_displayed && !reasoning_exclude && !content.trim().is_empty() {
+                                                if reasoning_displayed
+                                                    && !reasoning_exclude
+                                                    && !content.trim().is_empty()
+                                                {
                                                     // Always ensure we're on a new line before closing the box
                                                     println!();
                                                     println!("{}", "└──────────────────────────────────────────────────────────".dimmed());

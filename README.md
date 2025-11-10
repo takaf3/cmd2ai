@@ -197,8 +197,8 @@ mcp:
   disable_tools: false                    # Disable all MCP tools
   
   settings:
-    auto_detect: true                     # Auto-detect relevant servers
-    timeout: 30                           # MCP operation timeout
+    auto_detect: true                     # Auto-detect relevant servers via keywords
+    timeout: 30                           # MCP operation timeout (per tool call)
   
   # MCP Server Definitions
   servers:
@@ -212,8 +212,8 @@ mcp:
       enabled: true
   
   tool_selection:
-    max_servers: 3                       # Max servers to activate
-    min_match_score: 0.3                 # Min keyword match score
+    max_servers: 3                       # Max servers to activate per query
+    min_match_score: 0.3                 # Min keyword match score (0.0-1.0)
 ```
 
 #### Priority Order
@@ -376,6 +376,32 @@ The priority order is:
 Web search is now handled through MCP tools (like Gemini) instead of the built-in `:online` model suffix. 
 Configure MCP servers in your config file to enable intelligent web search capabilities that can be automatically 
 activated based on your query content.
+
+## MCP Server Selection
+
+cmd2ai uses intelligent keyword-based server selection to optimize performance:
+
+- **Automatic Selection**: When `auto_detect: true`, only servers matching keywords in your query are connected
+- **Keyword Matching**: Servers are scored based on how many of their `auto_activate_keywords` appear in your query
+- **Top N Selection**: Only the top `max_servers` servers above `min_match_score` threshold are activated
+- **Fallback**: If `auto_detect: false`, all enabled servers are connected (legacy behavior)
+
+Example:
+```yaml
+servers:
+  - name: filesystem
+    auto_activate_keywords: [file, read, write, directory]
+    enabled: true
+  
+  - name: time
+    auto_activate_keywords: [time, clock, date, today]
+    enabled: true
+```
+
+Query: "What time is it and list files in /tmp"
+- `time` server: score 0.25 (1/4 keywords match)
+- `filesystem` server: score 0.5 (2/4 keywords match)
+- Both servers activated if scores >= `min_match_score` (0.3)
 
 ## Conversation Memory
 

@@ -1,5 +1,5 @@
-use serde_json::{json, Value};
 use super::types::McpTool;
+use serde_json::{json, Value};
 
 pub fn format_tools_for_llm(tools: &[McpTool]) -> Vec<Value> {
     tools
@@ -16,4 +16,3 @@ pub fn format_tools_for_llm(tools: &[McpTool]) -> Vec<Value> {
         })
         .collect()
 }
-
