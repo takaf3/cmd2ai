@@ -192,9 +192,28 @@ reasoning:
   max_tokens: 1000                        # Max reasoning tokens
   exclude: false                          # Hide reasoning output
 
+# Global Tools Configuration
+tools:
+  enabled: true                           # Enable/disable all tools (both local and MCP)
+
+# Local Tools Configuration
+local_tools:
+  enabled: true                           # Enable local tools
+  base_dir: ${HOME}                       # Base directory for file operations
+  max_file_size_mb: 10                    # Max file size for read_file (MB)
+  tools:                                  # Per-tool configuration (optional)
+    - name: echo
+      enabled: true
+    - name: time_now
+      enabled: true
+    - name: read_file
+      enabled: true
+    - name: list_dir
+      enabled: true
+
 # MCP (Model Context Protocol) Configuration
 mcp:
-  disable_tools: false                    # Disable all MCP tools
+  disable_tools: false                    # Disable MCP tools (can also use --no-mcp-tools)
   
   settings:
     auto_detect: true                     # Auto-detect relevant servers via keywords
@@ -316,6 +335,7 @@ Command-line arguments always take precedence over environment variables, allowi
 - `AI_REASONING_MAX_TOKENS` - Maximum tokens for reasoning
 - `AI_REASONING_EXCLUDE` - Use reasoning but exclude from output ("true", "1", or "yes")
 - `AI_DISABLE_TOOLS` - Disable MCP tools ("true", "1", or "yes")
+- `AI_TOOLS_ENABLED` - Enable/disable all tools ("true", "1", or "yes")
 
 **Note:** All settings except the API key can be configured in YAML files. Environment variables override YAML config values, which is useful for temporary changes or debugging. The system also supports JSON files for backward compatibility.
 
@@ -330,7 +350,9 @@ Command-line arguments always take precedence over environment variables, allowi
 - `--clear` - Clear all conversation history
 - `--api-endpoint` - Custom API base URL (e.g., http://localhost:11434/v1)
 - `--mcp-server` - Connect to MCP server (format: name:command:arg1,arg2,...)
-- `--no-tools` - Disable MCP tools for this query
+- `--no-tools` - Disable all tools (both MCP and local) for this query
+- `--no-mcp-tools` - Disable MCP tools for this query
+- `--no-local-tools` - Disable local tools for this query
 - `--config-init` - Initialize a config file with example MCP servers
 - `--reasoning-effort` - Set reasoning effort level (high, medium, low)
 - `--reasoning-max-tokens` - Set maximum tokens for reasoning
@@ -402,6 +424,91 @@ Query: "What time is it and list files in /tmp"
 - `time` server: score 0.25 (1/4 keywords match)
 - `filesystem` server: score 0.5 (2/4 keywords match)
 - Both servers activated if scores >= `min_match_score` (0.3)
+
+## Local Tools
+
+cmd2ai includes built-in local tools that run directly in the application (no external processes). These tools are enabled by default when configured and can be used alongside MCP tools.
+
+### Available Local Tools
+
+- **`echo`** - Echo back provided text. Useful for testing or simple text output.
+- **`time_now`** - Get the current date and time in ISO-8601 format.
+- **`read_file`** - Read and return the contents of a file. Limited to files within the base directory and under the size limit.
+- **`list_dir`** - List files and directories in a directory. Limited to directories within the base directory.
+
+### Configuration
+
+Local tools are configured in your YAML config file:
+
+```yaml
+# Global tools toggle (affects both local and MCP tools)
+tools:
+  enabled: true
+
+# Local tools configuration
+local_tools:
+  enabled: true                    # Enable local tools
+  base_dir: ${HOME}               # Base directory for file operations (defaults to $HOME)
+  max_file_size_mb: 10            # Maximum file size for read_file (default: 10MB)
+  
+  # Per-tool configuration (optional)
+  # If a tool is not listed here, it defaults to enabled
+  tools:
+    - name: echo
+      enabled: true
+    - name: time_now
+      enabled: true
+    - name: read_file
+      enabled: true
+    - name: list_dir
+      enabled: true
+```
+
+### Security Considerations
+
+- **Base Directory**: All file operations are restricted to the configured `base_dir` (defaults to `$HOME`). Path traversal attacks are prevented.
+- **File Size Limits**: The `read_file` tool enforces a maximum file size (default 10MB) to prevent reading huge files.
+- **Path Validation**: All paths are validated and normalized to ensure they stay within the base directory.
+
+### Disabling Tools
+
+You can disable tools at multiple levels:
+
+```bash
+# Disable all tools (both local and MCP)
+ai --no-tools "What is 2+2?"
+
+# Disable only MCP tools
+ai --no-mcp-tools "What time is it?"
+
+# Disable only local tools
+ai --no-local-tools "List files in /tmp"
+```
+
+Or via config:
+
+```yaml
+# Disable all tools globally
+tools:
+  enabled: false
+
+# Disable only local tools
+local_tools:
+  enabled: false
+
+# Disable only MCP tools
+mcp:
+  disable_tools: true
+```
+
+### Tool Execution Priority
+
+When a tool is called:
+1. **Local tools** are checked first
+2. If not found locally, **MCP tools** are checked
+3. If neither is found, an error is returned
+
+This allows local tools to override MCP tools with the same name if needed.
 
 ## Conversation Memory
 

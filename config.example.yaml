@@ -1,5 +1,36 @@
 # cmd2ai Configuration File
-# This file configures AI model settings and MCP (Model Context Protocol) servers
+# This file configures AI model settings, local tools, and MCP (Model Context Protocol) servers
+
+# Global Tools Configuration
+tools:
+  # Enable or disable all tools (both local and MCP)
+  # When false, disables all tools regardless of per-section settings
+  enabled: true
+
+# Local Tools Configuration
+# Built-in tools that run directly in cmd2ai (no external processes)
+local_tools:
+  # Enable local tools
+  enabled: true
+  
+  # Base directory for file operations (defaults to $HOME)
+  # Supports environment variable expansion: ${HOME}, ${USER}, etc.
+  base_dir: ${HOME}
+  
+  # Maximum file size for read_file tool (in MB)
+  max_file_size_mb: 10
+  
+  # Per-tool configuration (optional)
+  # If a tool is not listed here, it defaults to enabled
+  tools:
+    - name: echo
+      enabled: true
+    - name: time_now
+      enabled: true
+    - name: read_file
+      enabled: true
+    - name: list_dir
+      enabled: true
 
 # API Configuration
 api:
@@ -41,7 +72,7 @@ reasoning:
 
 # MCP (Model Context Protocol) Configuration
 mcp:
-  # Disable all MCP tools
+  # Disable all MCP tools (can also use --no-mcp-tools flag)
   disable_tools: false
   
   # MCP Settings

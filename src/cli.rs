@@ -59,8 +59,14 @@ pub struct Args {
     )]
     pub auto_tools: bool,
 
-    #[arg(long = "no-tools", help = "Disable MCP tools for this query")]
+    #[arg(long = "no-tools", help = "Disable all tools (both MCP and local) for this query")]
     pub no_tools: bool,
+
+    #[arg(long = "no-mcp-tools", help = "Disable MCP tools for this query")]
+    pub no_mcp_tools: bool,
+
+    #[arg(long = "no-local-tools", help = "Disable local tools for this query")]
+    pub no_local_tools: bool,
 
     #[arg(
         long = "config-init",

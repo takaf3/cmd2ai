@@ -1,6 +1,7 @@
 mod cli;
 mod config;
 mod highlight;
+mod local_tools;
 mod mcp;
 mod models;
 mod session;
@@ -16,6 +17,7 @@ use tokio::time::{timeout, Duration};
 use cli::Args;
 use config::Config;
 use highlight::CodeBuffer;
+use local_tools::{call_local_tool, format_tools_for_llm as format_local_tools, LocalSettings, LocalToolRegistry};
 use mcp::McpClient;
 use models::{Citation, Message, RequestBody, StreamResponse};
 use session::{
@@ -295,7 +297,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Get available tools unless explicitly disabled
-    let tools = if !config.disable_tools && mcp_client.is_some() {
+    // Determine effective enablement: global tools.enabled > per-scope flags
+    let local_tools_enabled = config.tools_enabled
+        && config.local_tools_config.enabled
+        && !args.no_tools
+        && !args.no_local_tools;
+    
+    let mcp_tools_enabled = config.tools_enabled
+        && !config.disable_tools
+        && !args.no_tools
+        && !args.no_mcp_tools;
+
+    // Create local tools registry if enabled
+    let local_tools_registry = if local_tools_enabled {
+        let settings = LocalSettings::from_config(&config.local_tools_config);
+        Some(LocalToolRegistry::new(&config.local_tools_config, settings))
+    } else {
+        None
+    };
+
+    // Collect tools from both sources
+    let mut all_tools = Vec::new();
+
+    // Add local tools
+    if let Some(ref registry) = local_tools_registry {
+        let local_tools = format_local_tools(registry);
+        if !local_tools.is_empty() {
+            if config.verbose {
+                println!(
+                    "{}",
+                    format!("Available local tools: {}", local_tools.len()).cyan()
+                );
+            }
+            all_tools.extend(local_tools);
+        }
+    }
+
+    // Add MCP tools
+    if mcp_tools_enabled && mcp_client.is_some() {
         if let Some(ref client) = mcp_client {
             // Refresh tools before listing to catch any updates
             if let Err(e) = client.refresh_tools().await {
@@ -315,15 +354,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         format!("Available MCP tools: {}", mcp_tools.len()).cyan()
                     );
                 }
-                Some(mcp::tools::format_tools_for_llm(&mcp_tools))
-            } else {
-                None
+                all_tools.extend(mcp::tools::format_tools_for_llm(&mcp_tools));
             }
-        } else {
-            None
         }
-    } else {
+    }
+
+    let tools = if all_tools.is_empty() {
         None
+    } else {
+        Some(all_tools)
     };
 
     // Use non-streaming when tools are available for proper tool handling
@@ -461,62 +500,155 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             arguments_str,
                                         ) {
                                             Ok(arguments) => {
-                                                // Execute tool via MCP
-                                                if let Some(ref client) = mcp_client {
-                                                    let mcp_tool_call = mcp::McpToolCall {
-                                                        name: name.to_string(),
-                                                        arguments,
-                                                    };
-
-                                                    match client
-                                                        .call_tool(
-                                                            &mcp_tool_call,
-                                                            config.mcp_config.settings.timeout,
-                                                        )
-                                                        .await
-                                                    {
-                                                        Ok(tool_result) => {
-                                                            // Aggregate all content items
-                                                            let mut aggregated_text = String::new();
-                                                            for (i, content) in tool_result
-                                                                .content
-                                                                .iter()
-                                                                .enumerate()
-                                                            {
-                                                                if i > 0 {
-                                                                    aggregated_text
-                                                                        .push_str("\n\n---\n\n");
-                                                                }
-                                                                aggregated_text
-                                                                    .push_str(&content.text);
-                                                                println!("{}", content.text);
+                                                // Try local tools first, then MCP
+                                                let tool_result: Option<Result<serde_json::Value, String>> = if let Some(ref registry) = local_tools_registry {
+                                                    if registry.get(name).is_some() {
+                                                        // Execute local tool
+                                                        Some(match call_local_tool(registry, name, &arguments) {
+                                                            Ok(result_text) => {
+                                                                println!("{}", result_text);
+                                                                Ok(serde_json::json!({
+                                                                    "content": [{
+                                                                        "type": "text",
+                                                                        "text": result_text
+                                                                    }]
+                                                                }))
                                                             }
+                                                            Err(e) => {
+                                                                Err(format!("Local tool error: {}", e))
+                                                            }
+                                                        })
+                                                    } else {
+                                                        // Not a local tool, try MCP
+                                                        None
+                                                    }
+                                                } else {
+                                                    None
+                                                };
 
-                                                            if !aggregated_text.is_empty() {
+                                                match tool_result {
+                                                    Some(Ok(tool_result_json)) => {
+                                                        // Local tool succeeded
+                                                        let aggregated_text = tool_result_json
+                                                            .get("content")
+                                                            .and_then(|c| c.as_array())
+                                                            .and_then(|arr| arr.first())
+                                                            .and_then(|item| item.get("text"))
+                                                            .and_then(|t| t.as_str())
+                                                            .unwrap_or("")
+                                                            .to_string();
+
+                                                        if !aggregated_text.is_empty() {
+                                                            tool_results.push(Message {
+                                                                role: "tool".to_string(),
+                                                                content: Some(aggregated_text),
+                                                                tool_calls: None,
+                                                                tool_call_id: Some(id.to_string()),
+                                                            });
+                                                        }
+                                                    }
+                                                    Some(Err(e)) => {
+                                                        // Local tool failed
+                                                        eprintln!(
+                                                            "{}",
+                                                            format!("Tool execution error: {}", e).red()
+                                                        );
+                                                        tool_results.push(Message {
+                                                            role: "tool".to_string(),
+                                                            content: Some(format!("Error: {}", e)),
+                                                            tool_calls: None,
+                                                            tool_call_id: Some(id.to_string()),
+                                                        });
+                                                    }
+                                                    None => {
+                                                        // Not a local tool, try MCP
+                                                        if mcp_tools_enabled {
+                                                            if let Some(ref client) = mcp_client {
+                                                                let mcp_tool_call = mcp::McpToolCall {
+                                                                    name: name.to_string(),
+                                                                    arguments,
+                                                                };
+
+                                                                match client
+                                                                    .call_tool(
+                                                                        &mcp_tool_call,
+                                                                        config.mcp_config.settings.timeout,
+                                                                    )
+                                                                    .await
+                                                                {
+                                                                    Ok(tool_result) => {
+                                                                        // Aggregate all content items
+                                                                        let mut aggregated_text = String::new();
+                                                                        for (i, content) in tool_result
+                                                                            .content
+                                                                            .iter()
+                                                                            .enumerate()
+                                                                        {
+                                                                            if i > 0 {
+                                                                                aggregated_text
+                                                                                    .push_str("\n\n---\n\n");
+                                                                            }
+                                                                            aggregated_text
+                                                                                .push_str(&content.text);
+                                                                            println!("{}", content.text);
+                                                                        }
+
+                                                                        if !aggregated_text.is_empty() {
+                                                                            tool_results.push(Message {
+                                                                                role: "tool".to_string(),
+                                                                                content: Some(aggregated_text),
+                                                                                tool_calls: None,
+                                                                                tool_call_id: Some(
+                                                                                    id.to_string(),
+                                                                                ),
+                                                                            });
+                                                                        }
+                                                                    }
+                                                                    Err(e) => {
+                                                                        eprintln!(
+                                                                            "{}",
+                                                                            format!(
+                                                                                "Tool execution error: {}",
+                                                                                e
+                                                                            )
+                                                                            .red()
+                                                                        );
+                                                                        tool_results.push(Message {
+                                                                            role: "tool".to_string(),
+                                                                            content: Some(format!(
+                                                                                "Error: {}",
+                                                                                e
+                                                                            )),
+                                                                            tool_calls: None,
+                                                                            tool_call_id: Some(id.to_string()),
+                                                                        });
+                                                                    }
+                                                                }
+                                                            } else {
+                                                                eprintln!(
+                                                                    "{}",
+                                                                    format!("Tool '{}' not found (neither local nor MCP)", name).red()
+                                                                );
                                                                 tool_results.push(Message {
                                                                     role: "tool".to_string(),
-                                                                    content: Some(aggregated_text),
+                                                                    content: Some(format!(
+                                                                        "Error: Tool '{}' not found",
+                                                                        name
+                                                                    )),
                                                                     tool_calls: None,
-                                                                    tool_call_id: Some(
-                                                                        id.to_string(),
-                                                                    ),
+                                                                    tool_call_id: Some(id.to_string()),
                                                                 });
                                                             }
-                                                        }
-                                                        Err(e) => {
+                                                        } else {
                                                             eprintln!(
                                                                 "{}",
-                                                                format!(
-                                                                    "Tool execution error: {}",
-                                                                    e
-                                                                )
-                                                                .red()
+                                                                format!("Tool '{}' not found and MCP tools are disabled", name).red()
                                                             );
                                                             tool_results.push(Message {
                                                                 role: "tool".to_string(),
                                                                 content: Some(format!(
-                                                                    "Error: {}",
-                                                                    e
+                                                                    "Error: Tool '{}' not found",
+                                                                    name
                                                                 )),
                                                                 tool_calls: None,
                                                                 tool_call_id: Some(id.to_string()),

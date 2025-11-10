@@ -17,6 +17,8 @@ pub struct Config {
     pub reasoning: Option<Reasoning>,
     pub mcp_config: McpConfig,
     pub disable_tools: bool,
+    pub local_tools_config: LocalToolsConfig,
+    pub tools_enabled: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -31,6 +33,10 @@ pub struct JsonConfig {
     pub reasoning: ReasoningConfig,
     #[serde(default)]
     pub mcp: McpConfig,
+    #[serde(default)]
+    pub tools: ToolsConfig,
+    #[serde(default)]
+    pub local_tools: LocalToolsConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -118,6 +124,33 @@ pub struct ToolSelection {
     pub prompt_before_activation: bool,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ToolsConfig {
+    #[serde(default = "default_tools_enabled")]
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct LocalToolsConfig {
+    #[serde(default = "default_local_tools_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub base_dir: Option<String>,
+    #[serde(default = "default_max_file_size_mb")]
+    pub max_file_size_mb: u64,
+    #[serde(default)]
+    pub tools: Vec<LocalToolConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LocalToolConfig {
+    pub name: String,
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub settings: serde_json::Value,
+}
+
 impl Default for ApiConfig {
     fn default() -> Self {
         Self {
@@ -190,6 +223,23 @@ fn default_min_match_score() -> f64 {
 fn default_transport() -> String {
     "stdio".to_string()
 }
+fn default_tools_enabled() -> bool {
+    true
+}
+fn default_local_tools_enabled() -> bool {
+    true
+}
+fn default_max_file_size_mb() -> u64 {
+    10
+}
+
+impl Default for ToolsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_tools_enabled(),
+        }
+    }
+}
 
 impl Config {
     pub fn from_env_and_args(args: &Args) -> Result<Self, String> {
@@ -246,13 +296,30 @@ impl Config {
             .or(json_config.session.verbose)
             .unwrap_or(false);
 
-        // Get disable_tools flag: CLI arg > env var > JSON config > default
+        // Get tools_enabled: CLI arg (--no-tools) > env var > JSON config > default
+        // If --no-tools is set, disable all tools regardless of other settings
+        let tools_enabled = if args.no_tools {
+            false
+        } else {
+            env::var("AI_TOOLS_ENABLED")
+                .ok()
+                .map(|v| matches!(v.to_lowercase().as_str(), "true" | "1" | "yes"))
+                .unwrap_or(true)
+                && json_config.tools.enabled
+        };
+
+        // Get disable_tools flag: CLI arg (--no-tools or --no-mcp-tools) > env var > JSON config > default
+        // This is kept for backward compatibility but now only affects MCP tools
         let disable_tools = args.no_tools
+            || args.no_mcp_tools
             || env::var("AI_DISABLE_TOOLS")
                 .ok()
                 .map(|v| matches!(v.to_lowercase().as_str(), "true" | "1" | "yes"))
                 .or(json_config.mcp.disable_tools)
                 .unwrap_or(false);
+
+        // Get local_tools config
+        let local_tools_config = json_config.local_tools;
 
         // Build reasoning configuration from CLI args, env vars, and JSON config
         let reasoning = Self::build_reasoning_config(args, &json_config.reasoning);
@@ -270,6 +337,8 @@ impl Config {
             reasoning,
             mcp_config,
             disable_tools,
+            local_tools_config,
+            tools_enabled,
         })
     }
 
