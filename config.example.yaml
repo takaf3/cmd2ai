@@ -1,5 +1,150 @@
 # cmd2ai Configuration File
-# This file configures AI model settings and MCP (Model Context Protocol) servers
+# This file configures AI model settings and local tools
+
+# Global Tools Configuration
+tools:
+  # Enable or disable all tools
+  # When false, disables all tools regardless of per-section settings
+  enabled: true
+
+# Local Tools Configuration
+# Built-in tools that run directly in cmd2ai (no external processes)
+local_tools:
+  # Enable local tools
+  enabled: true
+  
+  # Base directory for file operations (defaults to $HOME)
+  # Supports environment variable expansion: ${HOME}, ${USER}, etc.
+  base_dir: ${HOME}
+  
+  # Maximum file size for read_file tool (in MB)
+  max_file_size_mb: 10
+  
+  # Per-tool configuration (optional)
+  # If a tool is not listed here, it defaults to enabled
+  tools:
+    # Built-in tools (just enable/disable)
+    - name: read_file
+      enabled: true
+    
+    # Custom script-based tool (inline Python)
+    - name: upper
+      enabled: true
+      type: script
+      description: "Convert text to uppercase"
+      interpreter: python3
+      script: |
+        import sys, json
+        data = json.load(sys.stdin)
+        text = data.get("text", "")
+        print(text.upper())
+      input_schema:
+        type: object
+        properties:
+          text:
+            type: string
+            description: "Text to convert to uppercase"
+        required: [text]
+        additionalProperties: false
+      timeout_secs: 10
+      max_output_bytes: 1048576
+    
+    # Custom command-based tool
+    - name: word_count
+      enabled: true
+      type: command
+      description: "Count words in text using wc command"
+      command: wc
+      args: ["-w"]
+      input_schema:
+        type: object
+        properties:
+          text:
+            type: string
+            description: "Text to count words in"
+        required: [text]
+        additionalProperties: false
+      timeout_secs: 10
+      max_output_bytes: 262144
+    
+    # Command tool with argument templating
+    # Use {{key}} syntax to inject tool arguments into command args
+    # SECURITY: Path arguments are automatically validated and restricted to base_dir
+    # The "--" separator is automatically inserted before templated path arguments
+    # to prevent option injection attacks.
+    - name: list_directory
+      enabled: true
+      type: command
+      description: "List files in a directory using ls"
+      command: ls
+      args: ["-la", "{{path}}"]  # {{path}} will be replaced with the 'path' argument value
+      # Security settings (all have secure defaults):
+      restrict_to_base_dir: true  # Restrict path arguments to base_dir (default: true)
+      insert_double_dash: true    # Insert "--" before templated args to prevent option injection (default: auto-detect)
+      # stdin_json: false  # Optional: set to false to disable sending JSON via stdin (default: true)
+      # Explicit validation policy (optional - path arguments are auto-detected)
+      template_validations:
+        path:
+          kind: path
+          allow_absolute: false  # Reject absolute paths (default: false)
+          # deny_patterns: ["\\.\\./"]  # Optional: deny specific patterns
+      input_schema:
+        type: object
+        properties:
+          path:
+            type: string
+            description: "Path to the directory to list (relative to base_dir)"
+        required: [path]
+        additionalProperties: false
+      timeout_secs: 10
+      max_output_bytes: 262144
+    
+    # Example: Command tool with non-path templated arguments
+    # For non-path arguments, you can use pattern validation
+    - name: search_text
+      enabled: true
+      type: command
+      description: "Search for text in files using grep"
+      command: grep
+      args: ["-r", "{{pattern}}", "{{directory}}"]
+      template_validations:
+        pattern:
+          kind: string
+          # Allow only alphanumeric and common regex characters
+          allow_patterns: ["^[a-zA-Z0-9\\s\\-_.*+?()|]+$"]
+        directory:
+          kind: path  # Explicitly mark as path for validation
+      input_schema:
+        type: object
+        properties:
+          pattern:
+            type: string
+            description: "Search pattern"
+          directory:
+            type: string
+            description: "Directory to search in (relative to base_dir)"
+        required: [pattern, directory]
+        additionalProperties: false
+      timeout_secs: 10
+      max_output_bytes: 262144
+    
+    # Custom script from file
+    # - name: my_script_tool
+    #   enabled: true
+    #   type: script
+    #   description: "Run a custom script from file"
+    #   interpreter: python3
+    #   script_path: scripts/my_tool.py  # Relative to base_dir
+    #   input_schema:
+    #     type: object
+    #     properties:
+    #       input:
+    #         type: string
+    #     required: [input]
+    #   timeout_secs: 30
+    #   working_dir: scripts  # Optional: change working directory
+    #   env:  # Optional: environment variables
+    #     CUSTOM_VAR: ${HOME}/custom
 
 # API Configuration
 api:
@@ -38,119 +183,3 @@ reasoning:
   
   # Use reasoning internally but exclude from output
   exclude: false
-
-# MCP (Model Context Protocol) Configuration
-mcp:
-  # Disable all MCP tools
-  disable_tools: false
-  
-  # MCP Settings
-  settings:
-    # Automatically detect and activate relevant MCP servers based on query
-    auto_detect: true
-    
-    # Timeout for MCP operations in seconds
-    timeout: 30
-  
-  # MCP Server Definitions
-  servers:
-    # Filesystem MCP Server
-    - name: filesystem
-      command: npx
-      args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-      description: File system operations
-      # Keywords that trigger this server
-      auto_activate_keywords:
-        - file
-        - files
-        - directory
-        - folder
-        - read
-        - write
-        - create
-        - delete
-        - list
-      enabled: true
-    
-    # Time MCP Server
-    - name: time
-      command: npx
-      args: ["-y", "@modelcontextprotocol/server-time"]
-      description: Time and date utilities
-      auto_activate_keywords:
-        - time
-        - clock
-        - current time
-        - what time
-        - date
-        - today
-        - tomorrow
-        - yesterday
-      enabled: true
-    
-    # GitHub MCP Server (disabled by default - requires GITHUB_TOKEN)
-    - name: github
-      command: npx
-      args: ["-y", "@modelcontextprotocol/server-github"]
-      description: GitHub API integration
-      auto_activate_keywords:
-        - github
-        - repository
-        - repo
-        - issue
-        - pull request
-        - pr
-        - commit
-      # Environment variables for this server
-      # Use ${VAR_NAME} syntax for expansion
-      env:
-        GITHUB_TOKEN: ${GITHUB_TOKEN}
-      enabled: false
-    
-    # Web Browser MCP Server
-    - name: web
-      command: npx
-      args: ["-y", "@modelcontextprotocol/server-web"]
-      description: Web browsing and scraping
-      auto_activate_keywords:
-        - browse
-        - website
-        - webpage
-        - url
-        - fetch
-        - scrape
-        - web
-        - http
-      enabled: true
-    
-    # PostgreSQL MCP Server (disabled by default - requires DATABASE_URL)
-    - name: postgres
-      command: npx
-      args: ["-y", "@modelcontextprotocol/server-postgres"]
-      description: PostgreSQL database operations
-      auto_activate_keywords:
-        - database
-        - sql
-        - postgres
-        - postgresql
-        - query
-        - table
-        - select
-        - insert
-        - update
-        - delete
-      env:
-        DATABASE_URL: ${DATABASE_URL}
-      enabled: false
-  
-  # Tool Selection Configuration
-  tool_selection:
-    # Maximum number of MCP servers to activate for a single query
-    max_servers: 3
-    
-    # Minimum keyword match score (0.0 to 1.0)
-    # Higher values require stronger keyword matches
-    min_match_score: 0.3
-    
-    # Prompt user before activating MCP servers
-    prompt_before_activation: false

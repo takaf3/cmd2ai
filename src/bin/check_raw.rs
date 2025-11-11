@@ -29,7 +29,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("{}", format!("Prompt: {}", prompt).cyan());
     println!(
         "{}",
-        format!("Reasoning: {}", if use_reasoning { "Enabled" } else { "Disabled" }).yellow()
+        format!(
+            "Reasoning: {}",
+            if use_reasoning { "Enabled" } else { "Disabled" }
+        )
+        .yellow()
     );
     println!("{}", "-".repeat(80).dimmed());
 
@@ -116,7 +120,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Ok(data) => {
                         println!("\n{}", "Parsed JSON:".green());
                         println!("{}", serde_json::to_string_pretty(&data)?);
-                        
+
                         // Highlight specific fields
                         if let Some(choices) = data["choices"].as_array() {
                             for choice in choices {

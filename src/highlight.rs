@@ -3,6 +3,9 @@ use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style, ThemeSet};
 use syntect::parsing::SyntaxSet;
 use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
+use terminal_size::{terminal_size, Width};
+
+const ANSI_RESET: &str = "\x1b[0m";
 
 pub struct CodeBuffer {
     buffer: String,
@@ -27,18 +30,60 @@ impl CodeBuffer {
         }
     }
 
+    /// Compute target width for code block borders
+    /// Returns width between 50 and 120, defaulting to 80 if terminal size unavailable
+    fn compute_box_width(&self) -> usize {
+        if let Some((Width(w), _)) = terminal_size() {
+            let cols = w as usize;
+            cols.min(120).max(50)
+        } else {
+            80
+        }
+    }
+
+    /// Generate header line for code block with dynamic width
+    fn format_header(&self, label: &str) -> String {
+        let width = self.compute_box_width();
+        // Calculate label length: label itself + 2 brackets
+        let label_len = label.len() + 2;
+        // Account for "┌─" prefix (2 chars)
+        let dash_count = width.saturating_sub(2 + label_len);
+        let dashes = "─".repeat(dash_count.max(1));
+        format!(
+            "{}{}[{}]{}\n",
+            ANSI_RESET,
+            "┌─".dimmed(),
+            label.cyan(),
+            dashes.dimmed()
+        )
+    }
+
+    /// Generate footer line for code block with dynamic width
+    fn format_footer(&self) -> String {
+        let width = self.compute_box_width();
+        // Account for "└─" prefix (2 chars) to mirror the header
+        let dash_count = width.saturating_sub(2);
+        let dashes = "─".repeat(dash_count.max(1));
+        format!(
+            "\n{}{}{}", 
+            ANSI_RESET, 
+            "└─".dimmed(), 
+            dashes.dimmed()
+        )
+    }
+
     fn find_code_block_end(&self, text: &str) -> Option<usize> {
         // Look for ``` at the beginning of a line
         if text.starts_with("```") {
             return Some(0);
         }
-        
+
         // Look for \n``` in the text
         if let Some(pos) = text.find("\n```") {
             // Return position of the backticks (after the newline)
             return Some(pos + 1);
         }
-        
+
         None
     }
 
@@ -96,12 +141,8 @@ impl CodeBuffer {
                         self.displayed_lines = 0;
 
                         // Output code block header
-                        output.push_str(&format!(
-                            "{}[{}]{}\n",
-                            "┌─".dimmed(),
-                            self.code_block_lang.as_deref().unwrap_or("code").cyan(),
-                            "─────────────────────────────────────────────────".dimmed()
-                        ));
+                        let label = self.code_block_lang.as_deref().unwrap_or("code");
+                        output.push_str(&self.format_header(label));
                     } else {
                         // Incomplete first line, wait for more content
                         self.buffer = format!("```{}", self.buffer);
@@ -117,7 +158,15 @@ impl CodeBuffer {
                 let code_end = self.find_code_block_end(&self.buffer);
                 if let Some(code_end) = code_end {
                     // Add content before the end marker to code block
-                    self.code_block_content.push_str(&self.buffer[..code_end]);
+                    // Strip trailing newline if present (the \n before ```)
+                    let content_before_marker = &self.buffer[..code_end];
+                    let stripped_newline = content_before_marker.ends_with('\n');
+                    let content_to_add = if stripped_newline {
+                        &content_before_marker[..content_before_marker.len() - 1]
+                    } else {
+                        content_before_marker
+                    };
+                    self.code_block_content.push_str(content_to_add);
 
                     // Highlight and output any remaining lines
                     let all_lines: Vec<&str> = self.code_block_content.lines().collect();
@@ -126,30 +175,30 @@ impl CodeBuffer {
                         if !remaining_lines.is_empty() {
                             let remaining_content = remaining_lines.join("\n");
                             // Add final newline only if the original content had one
-                            let final_content = if self.code_block_content.ends_with('\n') || code_end > 0 {
-                                remaining_content + "\n"
-                            } else {
-                                remaining_content
-                            };
-                            let highlighted = self.highlight_code(&final_content, self.code_block_lang.as_deref());
+                            // and we didn't just strip a newline before the closing marker
+                            let final_content =
+                                if self.code_block_content.ends_with('\n') && !stripped_newline {
+                                    remaining_content + "\n"
+                                } else {
+                                    remaining_content
+                                };
+                            let highlighted = self
+                                .highlight_code(&final_content, self.code_block_lang.as_deref());
                             output.push_str(&highlighted);
                         }
                     }
 
                     // Output code block footer
-                    output.push_str(&format!(
-                        "{}",
-                        "└──────────────────────────────────────────────────────────".dimmed()
-                    ));
+                    output.push_str(&self.format_footer());
 
                     // Consume the closing ``` and check what comes after
                     let after_marker = &self.buffer[code_end + 3..];
-                    
+
                     // Only add newline after footer if there's content following or a newline
                     if !after_marker.is_empty() {
                         output.push('\n');
                     }
-                    
+
                     // Reset state
                     self.buffer = after_marker.to_string();
                     self.in_code_block = false;
@@ -159,35 +208,37 @@ impl CodeBuffer {
                 } else {
                     // Still in code block, accumulate content and highlight incrementally
                     self.code_block_content.push_str(&self.buffer);
-                    
+
                     // Count complete lines in the accumulated content
                     let complete_lines: Vec<&str> = self.code_block_content.lines().collect();
                     let total_lines = complete_lines.len();
-                    
+
                     // Check if the last line is incomplete (doesn't end with newline)
-                    let has_incomplete_last_line = !self.code_block_content.ends_with('\n') 
-                        && !self.buffer.is_empty();
-                    
+                    let has_incomplete_last_line =
+                        !self.code_block_content.ends_with('\n') && !self.buffer.is_empty();
+
                     // Determine how many lines to display
                     let lines_to_display = if has_incomplete_last_line && total_lines > 0 {
-                        total_lines - 1  // Don't display the incomplete last line yet
+                        total_lines - 1 // Don't display the incomplete last line yet
                     } else {
                         total_lines
                     };
-                    
+
                     // Check if we have new complete lines to display
                     if lines_to_display > self.displayed_lines {
                         // Highlight only the new complete lines
-                        let new_lines: Vec<&str> = complete_lines[self.displayed_lines..lines_to_display].to_vec();
-                        
+                        let new_lines: Vec<&str> =
+                            complete_lines[self.displayed_lines..lines_to_display].to_vec();
+
                         if !new_lines.is_empty() {
                             let new_content = new_lines.join("\n") + "\n";
-                            let highlighted = self.highlight_code(&new_content, self.code_block_lang.as_deref());
+                            let highlighted =
+                                self.highlight_code(&new_content, self.code_block_lang.as_deref());
                             output.push_str(&highlighted);
                             self.displayed_lines = lines_to_display;
                         }
                     }
-                    
+
                     self.buffer.clear();
                     break;
                 }
@@ -215,14 +266,12 @@ impl CodeBuffer {
                         } else {
                             remaining_content
                         };
-                        let highlighted = self.highlight_code(&final_content, self.code_block_lang.as_deref());
+                        let highlighted =
+                            self.highlight_code(&final_content, self.code_block_lang.as_deref());
                         output.push_str(&highlighted);
                     }
                 }
-                output.push_str(&format!(
-                    "{}",
-                    "└──────────────────────────────────────────────────────────".dimmed()
-                ));
+                output.push_str(&self.format_footer());
             }
         } else if !self.buffer.is_empty() {
             output.push_str(&self.buffer);

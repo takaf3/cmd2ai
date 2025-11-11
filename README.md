@@ -9,10 +9,8 @@ A fast command-line tool that pipes your terminal commands to AI models via the 
 - ✅ Conversation memory with automatic continuation
 - ✅ Support for custom models and system prompts
 - ✅ Reasoning token support for enhanced AI model decision making
-- ✅ MCP (Model Context Protocol) tool integration for extended AI capabilities
-- ✅ Automatic MCP server detection based on query content
-- ✅ Web search via MCP tools (e.g., Gemini) instead of built-in :online suffix
-- ✅ Comprehensive JSON configuration with environment variable overrides
+- ✅ Local tool integration for extended AI capabilities
+- ✅ Comprehensive JSON/YAML configuration with environment variable overrides
 - ✅ Configuration migration tool for easy setup
 
 ## Prerequisites
@@ -112,32 +110,12 @@ Clear all conversation history:
 ./ai --clear
 ```
 
-### Web Search
+### Tools
 
-Disable MCP tools for a specific query:
+Disable tools for a specific query:
 ```bash
 ./ai --no-tools "What is 2+2?"
 ```
-
-Note: Web search is now handled through MCP tools. Configure appropriate MCP servers (like Gemini) in your config file for web search capabilities.
-
-### MCP Tool Integration
-
-Connect to MCP servers (tools are enabled by default):
-```bash
-# Connect to filesystem MCP server
-./ai --mcp-server "fs:npx:-y,@modelcontextprotocol/server-filesystem,/tmp" "List files in /tmp"
-
-# Connect to multiple MCP servers
-./ai --mcp-server "fs:npx:-y,@modelcontextprotocol/server-filesystem,/home" \
-     --mcp-server "time:npx:-y,@modelcontextprotocol/server-time" \
-     "What time is it and what files are in my home directory?"
-```
-
-MCP server format: `name:command:arg1,arg2,...`
-- `name`: Server identifier (e.g., "fs", "time")
-- `command`: Command to launch the server (e.g., "npx")
-- `args`: Comma-separated arguments (optional)
 
 ### Configuration
 
@@ -192,28 +170,24 @@ reasoning:
   max_tokens: 1000                        # Max reasoning tokens
   exclude: false                          # Hide reasoning output
 
-# MCP (Model Context Protocol) Configuration
-mcp:
-  disable_tools: false                    # Disable all MCP tools
-  
-  settings:
-    auto_detect: true                     # Auto-detect relevant servers
-    timeout: 30                           # MCP operation timeout
-  
-  # MCP Server Definitions
-  servers:
-    - name: filesystem
-      command: npx
-      args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-      description: File system operations
-      auto_activate_keywords: [file, read, write]
-      env:
-        CUSTOM_VAR: ${ENV_VAR}           # Environment variable expansion
+# Global Tools Configuration
+tools:
+  enabled: true                           # Enable/disable all tools
+
+# Local Tools Configuration
+local_tools:
+  enabled: true                           # Enable local tools
+  base_dir: ${HOME}                       # Base directory for file operations
+  max_file_size_mb: 10                    # Max file size for read_file (MB)
+  tools:                                  # Per-tool configuration (optional)
+    - name: echo
       enabled: true
-  
-  tool_selection:
-    max_servers: 3                       # Max servers to activate
-    min_match_score: 0.3                 # Min keyword match score
+    - name: time_now
+      enabled: true
+    - name: read_file
+      enabled: true
+    - name: list_dir
+      enabled: true
 ```
 
 #### Priority Order
@@ -315,7 +289,7 @@ Command-line arguments always take precedence over environment variables, allowi
 - `AI_REASONING_EFFORT` - Set reasoning effort level ("high", "medium", or "low")
 - `AI_REASONING_MAX_TOKENS` - Maximum tokens for reasoning
 - `AI_REASONING_EXCLUDE` - Use reasoning but exclude from output ("true", "1", or "yes")
-- `AI_DISABLE_TOOLS` - Disable MCP tools ("true", "1", or "yes")
+- `AI_TOOLS_ENABLED` - Enable/disable all tools ("true", "1", or "yes")
 
 **Note:** All settings except the API key can be configured in YAML files. Environment variables override YAML config values, which is useful for temporary changes or debugging. The system also supports JSON files for backward compatibility.
 
@@ -329,9 +303,8 @@ Command-line arguments always take precedence over environment variables, allowi
 - `-c, --continue` - Continue previous conversation even if expired
 - `--clear` - Clear all conversation history
 - `--api-endpoint` - Custom API base URL (e.g., http://localhost:11434/v1)
-- `--mcp-server` - Connect to MCP server (format: name:command:arg1,arg2,...)
-- `--no-tools` - Disable MCP tools for this query
-- `--config-init` - Initialize a config file with example MCP servers
+- `--no-tools` - Disable all tools for this query
+- `--config-init` - Initialize a config file with example local tools
 - `--reasoning-effort` - Set reasoning effort level (high, medium, low)
 - `--reasoning-max-tokens` - Set maximum tokens for reasoning
 - `--reasoning-exclude` - Use reasoning but exclude from response
@@ -371,11 +344,322 @@ The priority order is:
 2. Environment variable (`AI_API_ENDPOINT`)
 3. Default OpenRouter endpoint
 
-## Web Search via MCP Tools
+## Web Search via Custom Tools
 
-Web search is now handled through MCP tools (like Gemini) instead of the built-in `:online` model suffix. 
-Configure MCP servers in your config file to enable intelligent web search capabilities that can be automatically 
-activated based on your query content.
+Web search can be added via custom local tools configured in your config file. Create a custom tool that interfaces with a web search API or service.
+
+## Local Tools
+
+cmd2ai includes built-in local tools that run directly in the application (no external processes). These tools are enabled by default when configured.
+
+### Available Local Tools
+
+- **`read_file`** - Read and return the contents of a file. Limited to files within the base directory and under the size limit.
+
+### Configuration
+
+Local tools are configured in your YAML config file:
+
+```yaml
+# Global tools toggle (affects both local and MCP tools)
+tools:
+  enabled: true
+
+# Local tools configuration
+local_tools:
+  enabled: true                    # Enable local tools
+  base_dir: ${HOME}               # Base directory for file operations (defaults to $HOME)
+  max_file_size_mb: 10            # Maximum file size for read_file (default: 10MB)
+  
+  # Per-tool configuration (optional)
+  # If a tool is not listed here, it defaults to enabled
+  tools:
+    - name: read_file
+      enabled: true
+```
+
+### Creating Custom Tools
+
+You can create your own custom tools directly in the config file without modifying code. Custom tools can be either **script-based** (inline or from file) or **command-based** (external executables).
+
+#### Script-Based Tools
+
+Script tools run code using an interpreter (Python, Node.js, Bash, etc.):
+
+```yaml
+local_tools:
+  tools:
+    # Inline Python script
+    - name: upper
+      enabled: true
+      type: script
+      description: "Convert text to uppercase"
+      interpreter: python3
+      script: |
+        import sys, json
+        data = json.load(sys.stdin)
+        text = data.get("text", "")
+        print(text.upper())
+      input_schema:
+        type: object
+        properties:
+          text:
+            type: string
+            description: "Text to convert to uppercase"
+        required: [text]
+        additionalProperties: false
+      timeout_secs: 10
+      max_output_bytes: 1048576  # 1MB
+    
+    # Script from file (relative to base_dir)
+    - name: my_script_tool
+      enabled: true
+      type: script
+      description: "Run a custom script from file"
+      interpreter: python3
+      script_path: scripts/my_tool.py
+      input_schema:
+        type: object
+        properties:
+          input:
+            type: string
+        required: [input]
+      timeout_secs: 30
+      working_dir: scripts  # Optional: change working directory
+      env:  # Optional: environment variables (supports ${VAR} expansion)
+        CUSTOM_VAR: ${HOME}/custom
+```
+
+#### Command-Based Tools
+
+Command tools execute external programs. You can use argument templating with `{{key}}` syntax to inject tool arguments into command-line arguments:
+
+```yaml
+local_tools:
+  tools:
+    - name: word_count
+      enabled: true
+      type: command
+      description: "Count words in text using wc command"
+      command: wc
+      args: ["-w"]
+      input_schema:
+        type: object
+        properties:
+          text:
+            type: string
+            description: "Text to count words in"
+        required: [text]
+        additionalProperties: false
+      timeout_secs: 10
+      max_output_bytes: 262144  # 256KB
+    
+    # Example with argument templating
+    - name: list_directory
+      enabled: true
+      type: command
+      description: "List files in a directory using ls"
+      command: ls
+      args: ["-la", "{{path}}"]  # {{path}} will be replaced with the 'path' argument
+      input_schema:
+        type: object
+        properties:
+          path:
+            type: string
+            description: "Path to the directory to list (relative to base_dir)"
+        required: [path]
+        additionalProperties: false
+      timeout_secs: 10
+      max_output_bytes: 262144
+```
+
+#### Tool Configuration Fields
+
+**Required fields:**
+- `name` - Unique tool name
+- `type` - Either `"script"` or `"command"`
+- `description` - Tool description shown to the AI
+- `input_schema` - JSON Schema defining tool parameters
+- `enabled` - Enable/disable the tool
+
+**For script tools:**
+- `interpreter` - Interpreter command (e.g., `python3`, `node`, `bash`)
+- `script` OR `script_path` - Inline script content or path to script file
+
+**For command tools:**
+- `command` - Command to execute
+- `args` - Optional command arguments (array of strings, supports `{{key}}` templating)
+
+**Optional fields (both types):**
+- `timeout_secs` - Execution timeout in seconds (default: 30)
+- `max_output_bytes` - Maximum output size in bytes (default: 1MB)
+- `working_dir` - Working directory relative to `base_dir`
+- `env` - Environment variables (supports `${VAR}` expansion)
+
+**Optional fields (command tools only):**
+- `stdin_json` - Whether to send tool arguments as JSON via stdin (default: `true`). Set to `false` if the command doesn't read from stdin and you're using argument templating.
+
+#### Argument Templating for Command Tools
+
+Command tools support argument templating using `{{key}}` syntax. This allows you to inject tool arguments directly into command-line arguments:
+
+```yaml
+- name: list_directory
+  type: command
+  command: ls
+  args: ["-la", "{{path}}"]  # {{path}} is replaced with the 'path' argument value
+  stdin_json: false  # Disable stdin since ls doesn't read from stdin
+  input_schema:
+    type: object
+    properties:
+      path:
+        type: string
+    required: [path]
+```
+
+When the tool is called with `{"path": "Documents"}`, the command executed will be: `ls -la Documents`
+
+**Note**: If `stdin_json` is `false`, the tool arguments are only available via templated args. If `true` (default), arguments are sent both via stdin (as JSON) and can be templated into args.
+
+#### How Custom Tools Work
+
+1. **Input**: 
+   - For scripts: Tool arguments are sent as JSON on stdin (always)
+   - For commands: Tool arguments can be templated into `args` using `{{key}}` syntax, and optionally sent as JSON on stdin (controlled by `stdin_json`)
+2. **Output**: Tool output (stdout) is captured and returned as the tool result
+3. **Validation**: Arguments are validated against the `input_schema` before execution
+4. **Security**: All paths are restricted to `base_dir`, timeouts and output limits are enforced
+
+#### Example: Reading JSON from stdin
+
+Your script should read JSON from stdin:
+
+```python
+import sys, json
+data = json.load(sys.stdin)
+# Process data
+result = process(data)
+print(result)  # Output becomes tool result
+```
+
+### Security Considerations
+
+- **Base Directory**: All file operations are restricted to the configured `base_dir` (defaults to `$HOME`). Path traversal attacks are prevented.
+- **File Size Limits**: The `read_file` tool enforces a maximum file size (default 10MB) to prevent reading huge files.
+- **Path Validation**: All paths are validated and normalized to ensure they stay within the base directory.
+- **Execution Limits**: Custom tools have configurable timeouts and output size limits to prevent runaway processes.
+- **Sandboxing**: Script paths and working directories are restricted to `base_dir`.
+
+#### Security with Templated Command Arguments
+
+When using argument templating in command-based tools (e.g., `args: ["-la", "{{path}}"]`), cmd2ai implements several security measures to prevent argument injection and path traversal attacks:
+
+**Automatic Path Validation:**
+- Arguments with names matching `*path*` (case-insensitive) are automatically treated as paths
+- Path arguments are validated and canonicalized to ensure they stay within `base_dir`
+- Absolute paths are rejected by default (unless explicitly allowed)
+- Path traversal attempts (e.g., `../../../etc/passwd`) are blocked
+
+**Option Injection Prevention:**
+- Values starting with `-` are rejected for path arguments (prevents injecting command-line options)
+- The `--` separator is automatically inserted before templated path arguments to prevent option parsing
+- This ensures that even if an attacker tries to inject `--help` or similar, it's treated as a filename
+
+**Explicit Validation Policies:**
+You can configure explicit validation policies for templated arguments:
+
+```yaml
+local_tools:
+  tools:
+    - name: list_directory
+      type: command
+      command: ls
+      args: ["-la", "{{path}}"]
+      # Security settings (all have secure defaults)
+      restrict_to_base_dir: true  # Restrict paths to base_dir (default: true)
+      insert_double_dash: true     # Insert "--" before templated args (default: auto-detect)
+      template_validations:
+        path:
+          kind: path               # Explicitly mark as path
+          allow_absolute: false    # Reject absolute paths (default: false)
+          deny_patterns: ["\\.\\./"]  # Optional: deny specific patterns
+```
+
+**When to Disable Security Features:**
+- Setting `restrict_to_base_dir: false` disables path validation (not recommended)
+- Setting `insert_double_dash: false` disables option injection prevention (not recommended)
+- Only disable these features if you fully understand the security implications and trust all tool call arguments
+
+**Best Practices:**
+1. Always use relative paths in tool arguments (they'll be resolved relative to `base_dir`)
+2. Use explicit `template_validations` for non-path arguments that need pattern matching
+3. Keep `base_dir` restricted to a safe directory (default `$HOME` is reasonable)
+4. Review tool configurations before enabling them in production
+5. Use verbose mode (`AI_VERBOSE=true`) to audit tool calls during development
+
+### Disabling Tools
+
+You can disable tools at multiple levels:
+
+```bash
+# Disable all tools
+ai --no-tools "What is 2+2?"
+```
+
+Or via config:
+
+```yaml
+# Disable all tools globally
+tools:
+  enabled: false
+
+# Disable only local tools
+local_tools:
+  enabled: false
+```
+
+### Debugging Local Tools
+
+When troubleshooting tool execution issues, enable verbose logging to see detailed information about tool calls:
+
+```bash
+# Enable verbose mode
+AI_VERBOSE=true ai "List files in Documents"
+```
+
+Or set it in your config:
+
+```yaml
+session:
+  verbose: true
+```
+
+With verbose mode enabled, you'll see detailed debug output including:
+
+- **Tool Registration**: Which tools are being registered and their configuration
+- **Tool Selection**: Which tool the AI selected and the arguments it's using
+- **Argument Validation**: Whether arguments passed validation against the schema
+- **Path Resolution**: How user-provided paths are resolved relative to `base_dir`
+- **Command Execution**: The exact command/script being run, working directory, timeout, and environment variables
+- **Execution Results**: Exit codes, execution duration, output size, and any stderr output
+
+**Example verbose output:**
+
+```
+[tools] Available tools: read_file, list_directory (base_dir=/Users/takafumi)
+[tools] Selected tool: 'list_directory' with args: {"path":"Documents"}
+[tools] Validating arguments for 'list_directory': {"path":"Documents"}
+[tools] Validation passed for 'list_directory'
+[tools] Calling tool 'list_directory' with args: {"path":"Documents"}
+[tools] run: ls -la "Documents" (cwd=/Users/takafumi, timeout=10s)
+[tools] done: exit_code=0, duration=0.05s, output_size=1234 bytes
+```
+
+This is especially useful when debugging:
+- Why a tool isn't being called (check tool registration logs)
+- Why arguments aren't working (check validation logs)
+- Why paths aren't resolving correctly (check path resolution logs)
+- Why commands fail (check execution logs for exact command and stderr)
 
 ## Conversation Memory
 
@@ -400,16 +684,27 @@ This Rust implementation uses:
 
 ## Development
 
-The project includes a Makefile with several helpful commands:
+See [CLAUDE.md](CLAUDE.md) for detailed development documentation.
 
-```bash
-make          # Build release binary (default)
-make install  # Build and install binary and ZSH widget
-make uninstall # Remove installed files
-make clean    # Clean build artifacts
-make dev      # Build debug binary
-make test     # Run tests
-make fmt      # Format code
-make lint     # Run clippy linter
-make check    # Check compilation
-```
+## Changelog
+
+### Version 0.2.2 (Security Release)
+
+**Security Fixes:**
+- **Fixed argument injection vulnerability in templated command arguments**: Path arguments in command-based tools are now validated and restricted to `base_dir` by default
+- **Added option injection prevention**: Values starting with `-` are rejected for path arguments, and `--` separator is automatically inserted before templated path arguments
+- **Enhanced path validation**: All templated path arguments are canonicalized and validated to prevent path traversal attacks
+- **Configurable validation policies**: Added `template_validations` configuration for fine-grained control over argument validation
+
+**New Features:**
+- Added `restrict_to_base_dir` configuration option (default: `true`) for command tools
+- Added `insert_double_dash` configuration option (default: auto-detect) for option injection prevention
+- Added `template_validations` configuration for explicit validation policies per argument
+
+**Documentation:**
+- Added comprehensive security documentation for templated command arguments
+- Updated configuration examples with secure defaults
+
+### Version 0.2.1
+
+- Initial release with local tools support
