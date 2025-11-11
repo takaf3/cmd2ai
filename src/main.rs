@@ -410,7 +410,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 .await
                                                 {
                                                     Ok(result_text) => {
-                                                        println!("{}", result_text);
+                                                        // Display tool result in a boxed format using CodeBuffer
+                                                        let tool_block = format!("```TOOL: {}\n{}\n```", name, result_text);
+                                                        let mut code_buffer = highlight::CodeBuffer::new();
+                                                        let formatted = code_buffer.append(&tool_block);
+                                                        if !formatted.is_empty() {
+                                                            print!("{}", formatted);
+                                                        }
+                                                        let remaining = code_buffer.flush();
+                                                        if !remaining.is_empty() {
+                                                            print!("{}", remaining.trim_end());
+                                                        }
+                                                        println!();
+                                                        
+                                                        // Keep the original result_text for the message (not the formatted version)
                                                         tool_results.push(Message {
                                                             role: "tool".to_string(),
                                                             content: Some(result_text),
@@ -421,14 +434,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                         });
                                                     }
                                                     Err(e) => {
-                                                        eprintln!(
-                                                            "{}",
-                                                            format!(
-                                                                "Tool execution error: {}",
-                                                                e
-                                                            )
-                                                            .red()
-                                                        );
+                                                        // Display tool error in a boxed format using CodeBuffer
+                                                        let error_text = format!("Error: {}", e);
+                                                        let tool_error_block = format!("```TOOL ERROR: {}\n{}\n```", name, error_text);
+                                                        let mut code_buffer = highlight::CodeBuffer::new();
+                                                        let formatted = code_buffer.append(&tool_error_block);
+                                                        if !formatted.is_empty() {
+                                                            print!("{}", formatted);
+                                                        }
+                                                        let remaining = code_buffer.flush();
+                                                        if !remaining.is_empty() {
+                                                            print!("{}", remaining.trim_end());
+                                                        }
+                                                        println!();
+                                                        
                                                         tool_results.push(Message {
                                                             role: "tool".to_string(),
                                                             content: Some(format!(
@@ -443,11 +462,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                     }
                                                 }
                                             } else {
-                                                eprintln!(
-                                                    "{}",
-                                                    format!("Tool '{}' not found", name)
-                                                        .red()
-                                                );
+                                                // Display tool not found error in a boxed format
+                                                let error_text = format!("Error: Tool '{}' not found", name);
+                                                let tool_error_block = format!("```TOOL ERROR: {}\n{}\n```", name, error_text);
+                                                let mut code_buffer = highlight::CodeBuffer::new();
+                                                let formatted = code_buffer.append(&tool_error_block);
+                                                if !formatted.is_empty() {
+                                                    print!("{}", formatted);
+                                                }
+                                                let remaining = code_buffer.flush();
+                                                if !remaining.is_empty() {
+                                                    print!("{}", remaining.trim_end());
+                                                }
+                                                println!();
+                                                
                                                 tool_results.push(Message {
                                                     role: "tool".to_string(),
                                                     content: Some(format!(
@@ -459,10 +487,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 });
                                             }
                                         } else {
-                                            eprintln!(
-                                                "{}",
-                                                format!("Tool '{}' not found (local tools disabled)", name).red()
-                                            );
+                                            // Display tool not found error (local tools disabled) in a boxed format
+                                            let error_text = format!("Error: Tool '{}' not found (local tools disabled)", name);
+                                            let tool_error_block = format!("```TOOL ERROR: {}\n{}\n```", name, error_text);
+                                            let mut code_buffer = highlight::CodeBuffer::new();
+                                            let formatted = code_buffer.append(&tool_error_block);
+                                            if !formatted.is_empty() {
+                                                print!("{}", formatted);
+                                            }
+                                            let remaining = code_buffer.flush();
+                                            if !remaining.is_empty() {
+                                                print!("{}", remaining.trim_end());
+                                            }
+                                            println!();
+                                            
                                             tool_results.push(Message {
                                                 role: "tool".to_string(),
                                                 content: Some(format!(
@@ -475,7 +513,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         }
                                     }
                                     Err(err) => {
-                                        eprintln!("{}", format!("Failed to parse arguments for tool '{}' : {}", name, err).red());
+                                        // Display argument parsing error in a boxed format
+                                        let error_text = format!("Error: failed to parse arguments for tool '{}' : {}", name, err);
+                                        let tool_error_block = format!("```TOOL ERROR: {}\n{}\n```", name, error_text);
+                                        let mut code_buffer = highlight::CodeBuffer::new();
+                                        let formatted = code_buffer.append(&tool_error_block);
+                                        if !formatted.is_empty() {
+                                            print!("{}", formatted);
+                                        }
+                                        let remaining = code_buffer.flush();
+                                        if !remaining.is_empty() {
+                                            print!("{}", remaining.trim_end());
+                                        }
+                                        println!();
+                                        
                                         tool_results.push(Message {
                                             role: "tool".to_string(),
                                             content: Some(format!("Error: failed to parse arguments for tool '{}' : {}", name, err)),
