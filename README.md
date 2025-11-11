@@ -9,10 +9,8 @@ A fast command-line tool that pipes your terminal commands to AI models via the 
 - ✅ Conversation memory with automatic continuation
 - ✅ Support for custom models and system prompts
 - ✅ Reasoning token support for enhanced AI model decision making
-- ✅ MCP (Model Context Protocol) tool integration for extended AI capabilities
-- ✅ Automatic MCP server detection based on query content
-- ✅ Web search via MCP tools (e.g., Gemini) instead of built-in :online suffix
-- ✅ Comprehensive JSON configuration with environment variable overrides
+- ✅ Local tool integration for extended AI capabilities
+- ✅ Comprehensive JSON/YAML configuration with environment variable overrides
 - ✅ Configuration migration tool for easy setup
 
 ## Prerequisites
@@ -112,32 +110,12 @@ Clear all conversation history:
 ./ai --clear
 ```
 
-### Web Search
+### Tools
 
-Disable MCP tools for a specific query:
+Disable tools for a specific query:
 ```bash
 ./ai --no-tools "What is 2+2?"
 ```
-
-Note: Web search is now handled through MCP tools. Configure appropriate MCP servers (like Gemini) in your config file for web search capabilities.
-
-### MCP Tool Integration
-
-Connect to MCP servers (tools are enabled by default):
-```bash
-# Connect to filesystem MCP server
-./ai --mcp-server "fs:npx:-y,@modelcontextprotocol/server-filesystem,/tmp" "List files in /tmp"
-
-# Connect to multiple MCP servers
-./ai --mcp-server "fs:npx:-y,@modelcontextprotocol/server-filesystem,/home" \
-     --mcp-server "time:npx:-y,@modelcontextprotocol/server-time" \
-     "What time is it and what files are in my home directory?"
-```
-
-MCP server format: `name:command:arg1,arg2,...`
-- `name`: Server identifier (e.g., "fs", "time")
-- `command`: Command to launch the server (e.g., "npx")
-- `args`: Comma-separated arguments (optional)
 
 ### Configuration
 
@@ -194,7 +172,7 @@ reasoning:
 
 # Global Tools Configuration
 tools:
-  enabled: true                           # Enable/disable all tools (both local and MCP)
+  enabled: true                           # Enable/disable all tools
 
 # Local Tools Configuration
 local_tools:
@@ -210,29 +188,6 @@ local_tools:
       enabled: true
     - name: list_dir
       enabled: true
-
-# MCP (Model Context Protocol) Configuration
-mcp:
-  disable_tools: false                    # Disable MCP tools (can also use --no-mcp-tools)
-  
-  settings:
-    auto_detect: true                     # Auto-detect relevant servers via keywords
-    timeout: 30                           # MCP operation timeout (per tool call)
-  
-  # MCP Server Definitions
-  servers:
-    - name: filesystem
-      command: npx
-      args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-      description: File system operations
-      auto_activate_keywords: [file, read, write]
-      env:
-        CUSTOM_VAR: ${ENV_VAR}           # Environment variable expansion
-      enabled: true
-  
-  tool_selection:
-    max_servers: 3                       # Max servers to activate per query
-    min_match_score: 0.3                 # Min keyword match score (0.0-1.0)
 ```
 
 #### Priority Order
@@ -334,7 +289,6 @@ Command-line arguments always take precedence over environment variables, allowi
 - `AI_REASONING_EFFORT` - Set reasoning effort level ("high", "medium", or "low")
 - `AI_REASONING_MAX_TOKENS` - Maximum tokens for reasoning
 - `AI_REASONING_EXCLUDE` - Use reasoning but exclude from output ("true", "1", or "yes")
-- `AI_DISABLE_TOOLS` - Disable MCP tools ("true", "1", or "yes")
 - `AI_TOOLS_ENABLED` - Enable/disable all tools ("true", "1", or "yes")
 
 **Note:** All settings except the API key can be configured in YAML files. Environment variables override YAML config values, which is useful for temporary changes or debugging. The system also supports JSON files for backward compatibility.
@@ -349,11 +303,8 @@ Command-line arguments always take precedence over environment variables, allowi
 - `-c, --continue` - Continue previous conversation even if expired
 - `--clear` - Clear all conversation history
 - `--api-endpoint` - Custom API base URL (e.g., http://localhost:11434/v1)
-- `--mcp-server` - Connect to MCP server (format: name:command:arg1,arg2,...)
-- `--no-tools` - Disable all tools (both MCP and local) for this query
-- `--no-mcp-tools` - Disable MCP tools for this query
-- `--no-local-tools` - Disable local tools for this query
-- `--config-init` - Initialize a config file with example MCP servers
+- `--no-tools` - Disable all tools for this query
+- `--config-init` - Initialize a config file with example local tools
 - `--reasoning-effort` - Set reasoning effort level (high, medium, low)
 - `--reasoning-max-tokens` - Set maximum tokens for reasoning
 - `--reasoning-exclude` - Use reasoning but exclude from response
@@ -393,41 +344,13 @@ The priority order is:
 2. Environment variable (`AI_API_ENDPOINT`)
 3. Default OpenRouter endpoint
 
-## Web Search via MCP Tools
+## Web Search via Custom Tools
 
-Web search is now handled through MCP tools (like Gemini) instead of the built-in `:online` model suffix. 
-Configure MCP servers in your config file to enable intelligent web search capabilities that can be automatically 
-activated based on your query content.
-
-## MCP Server Selection
-
-cmd2ai uses intelligent keyword-based server selection to optimize performance:
-
-- **Automatic Selection**: When `auto_detect: true`, only servers matching keywords in your query are connected
-- **Keyword Matching**: Servers are scored based on how many of their `auto_activate_keywords` appear in your query
-- **Top N Selection**: Only the top `max_servers` servers above `min_match_score` threshold are activated
-- **Fallback**: If `auto_detect: false`, all enabled servers are connected (legacy behavior)
-
-Example:
-```yaml
-servers:
-  - name: filesystem
-    auto_activate_keywords: [file, read, write, directory]
-    enabled: true
-  
-  - name: time
-    auto_activate_keywords: [time, clock, date, today]
-    enabled: true
-```
-
-Query: "What time is it and list files in /tmp"
-- `time` server: score 0.25 (1/4 keywords match)
-- `filesystem` server: score 0.5 (2/4 keywords match)
-- Both servers activated if scores >= `min_match_score` (0.3)
+Web search can be added via custom local tools configured in your config file. Create a custom tool that interfaces with a web search API or service.
 
 ## Local Tools
 
-cmd2ai includes built-in local tools that run directly in the application (no external processes). These tools are enabled by default when configured and can be used alongside MCP tools.
+cmd2ai includes built-in local tools that run directly in the application (no external processes). These tools are enabled by default when configured.
 
 ### Available Local Tools
 
@@ -596,14 +519,8 @@ print(result)  # Output becomes tool result
 You can disable tools at multiple levels:
 
 ```bash
-# Disable all tools (both local and MCP)
+# Disable all tools
 ai --no-tools "What is 2+2?"
-
-# Disable only MCP tools
-ai --no-mcp-tools "What time is it?"
-
-# Disable only local tools
-ai --no-local-tools "List files in /tmp"
 ```
 
 Or via config:
@@ -616,20 +533,7 @@ tools:
 # Disable only local tools
 local_tools:
   enabled: false
-
-# Disable only MCP tools
-mcp:
-  disable_tools: true
 ```
-
-### Tool Execution Priority
-
-When a tool is called:
-1. **Local tools** are checked first
-2. If not found locally, **MCP tools** are checked
-3. If neither is found, an error is returned
-
-This allows local tools to override MCP tools with the same name if needed.
 
 ## Conversation Memory
 

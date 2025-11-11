@@ -1,9 +1,9 @@
 # cmd2ai Configuration File
-# This file configures AI model settings, local tools, and MCP (Model Context Protocol) servers
+# This file configures AI model settings and local tools
 
 # Global Tools Configuration
 tools:
-  # Enable or disable all tools (both local and MCP)
+  # Enable or disable all tools
   # When false, disables all tools regardless of per-section settings
   enabled: true
 
@@ -128,124 +128,3 @@ reasoning:
   
   # Use reasoning internally but exclude from output
   exclude: false
-
-# MCP (Model Context Protocol) Configuration
-mcp:
-  # Disable all MCP tools (can also use --no-mcp-tools flag)
-  disable_tools: false
-  
-  # MCP Settings
-  settings:
-    # Automatically detect and activate relevant MCP servers based on query keywords
-    # When enabled, only servers matching keywords in your query will be connected
-    # When disabled, all enabled servers are connected (legacy behavior)
-    auto_detect: true
-    
-    # Timeout for MCP operations in seconds
-    timeout: 30
-  
-  # MCP Server Definitions
-  servers:
-    # Filesystem MCP Server
-    - name: filesystem
-      command: npx
-      args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-      description: File system operations
-      # Keywords that trigger this server
-      auto_activate_keywords:
-        - file
-        - files
-        - directory
-        - folder
-        - read
-        - write
-        - create
-        - delete
-        - list
-      enabled: true
-    
-    # Time MCP Server
-    - name: time
-      command: npx
-      args: ["-y", "@modelcontextprotocol/server-time"]
-      description: Time and date utilities
-      auto_activate_keywords:
-        - time
-        - clock
-        - current time
-        - what time
-        - date
-        - today
-        - tomorrow
-        - yesterday
-      enabled: true
-    
-    # GitHub MCP Server (disabled by default - requires GITHUB_TOKEN)
-    - name: github
-      command: npx
-      args: ["-y", "@modelcontextprotocol/server-github"]
-      description: GitHub API integration
-      auto_activate_keywords:
-        - github
-        - repository
-        - repo
-        - issue
-        - pull request
-        - pr
-        - commit
-      # Environment variables for this server
-      # Use ${VAR_NAME} syntax for expansion
-      env:
-        GITHUB_TOKEN: ${GITHUB_TOKEN}
-      enabled: false
-    
-    # Web Browser MCP Server
-    - name: web
-      command: npx
-      args: ["-y", "@modelcontextprotocol/server-web"]
-      description: Web browsing and scraping
-      auto_activate_keywords:
-        - browse
-        - website
-        - webpage
-        - url
-        - fetch
-        - scrape
-        - web
-        - http
-      enabled: true
-    
-    # PostgreSQL MCP Server (disabled by default - requires DATABASE_URL)
-    - name: postgres
-      command: npx
-      args: ["-y", "@modelcontextprotocol/server-postgres"]
-      description: PostgreSQL database operations
-      auto_activate_keywords:
-        - database
-        - sql
-        - postgres
-        - postgresql
-        - query
-        - table
-        - select
-        - insert
-        - update
-        - delete
-      env:
-        DATABASE_URL: ${DATABASE_URL}
-      enabled: false
-  
-  # Tool Selection Configuration
-  tool_selection:
-    # Maximum number of MCP servers to activate for a single query
-    # Only applies when auto_detect is enabled
-    max_servers: 3
-    
-    # Minimum keyword match score (0.0 to 1.0)
-    # Higher values require stronger keyword matches
-    # Score is calculated as: (matched_keywords / total_keywords)
-    # Example: If a server has 5 keywords and 2 match, score = 0.4
-    min_match_score: 0.3
-    
-    # Prompt user before activating MCP servers (not yet implemented)
-    prompt_before_activation: false

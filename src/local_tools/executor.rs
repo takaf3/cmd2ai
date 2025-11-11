@@ -1,12 +1,11 @@
-use crate::config::LocalToolConfig;
-use crate::config::McpConfig;
+use crate::config::{expand_env_var_in_string, expand_env_vars, LocalToolConfig};
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
-use tokio::process::Command;
 use tokio::io::AsyncWriteExt;
+use tokio::process::Command;
 use tokio::time::timeout;
 
 use super::registry::LocalSettings;
@@ -18,13 +17,19 @@ pub async fn execute_dynamic_tool(
     settings: &LocalSettings,
 ) -> Result<String, String> {
     let tool_type = tool_config.r#type.as_deref().ok_or_else(|| {
-        format!("Tool '{}' is missing 'type' field (must be 'script' or 'command')", tool_config.name)
+        format!(
+            "Tool '{}' is missing 'type' field (must be 'script' or 'command')",
+            tool_config.name
+        )
     })?;
 
     match tool_type {
         "script" => execute_script(tool_config, arguments, settings).await,
         "command" => execute_command(tool_config, arguments, settings).await,
-        _ => Err(format!("Unknown tool type '{}' for tool '{}'", tool_type, tool_config.name)),
+        _ => Err(format!(
+            "Unknown tool type '{}' for tool '{}'",
+            tool_type, tool_config.name
+        )),
     }
 }
 
@@ -34,26 +39,28 @@ async fn execute_script(
     settings: &LocalSettings,
 ) -> Result<String, String> {
     let interpreter = tool_config.interpreter.as_ref().ok_or_else(|| {
-        format!("Tool '{}' (type: script) requires 'interpreter' field", tool_config.name)
+        format!(
+            "Tool '{}' (type: script) requires 'interpreter' field",
+            tool_config.name
+        )
     })?;
 
     // Determine script source: inline or file path
     let script_path = if let Some(ref inline_script) = tool_config.script {
         // Write inline script to temporary file
         let temp_dir = settings.base_dir.join(".cmd2ai-tools").join("tmp");
-        fs::create_dir_all(&temp_dir).map_err(|e| {
-            format!("Failed to create temp directory: {}", e)
-        })?;
-        
-        let temp_file = temp_dir.join(format!("{}.{}", 
+        fs::create_dir_all(&temp_dir)
+            .map_err(|e| format!("Failed to create temp directory: {}", e))?;
+
+        let temp_file = temp_dir.join(format!(
+            "{}.{}",
             tool_config.name.replace('/', "_"),
             get_script_extension(interpreter)
         ));
-        
-        fs::write(&temp_file, inline_script).map_err(|e| {
-            format!("Failed to write script file: {}", e)
-        })?;
-        
+
+        fs::write(&temp_file, inline_script)
+            .map_err(|e| format!("Failed to write script file: {}", e))?;
+
         // Set executable permissions (Unix-like systems)
         #[cfg(unix)]
         {
@@ -62,11 +69,10 @@ async fn execute_script(
                 .map_err(|e| format!("Failed to get file metadata: {}", e))?
                 .permissions();
             perms.set_mode(0o755);
-            fs::set_permissions(&temp_file, perms).map_err(|e| {
-                format!("Failed to set script permissions: {}", e)
-            })?;
+            fs::set_permissions(&temp_file, perms)
+                .map_err(|e| format!("Failed to set script permissions: {}", e))?;
         }
-        
+
         temp_file
     } else if let Some(ref script_path_str) = tool_config.script_path {
         // Resolve script path relative to base_dir
@@ -86,7 +92,7 @@ async fn execute_script(
     };
 
     // Expand environment variables
-    let env_vars = McpConfig::expand_env_vars(&tool_config.env);
+    let env_vars = expand_env_vars(&tool_config.env);
 
     // Prepare command
     let mut cmd = Command::new(interpreter);
@@ -102,33 +108,36 @@ async fn execute_script(
     }
 
     // Spawn process
-    let mut child = cmd.spawn().map_err(|e| {
-        format!("Failed to spawn script process: {}", e)
-    })?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to spawn script process: {}", e))?;
 
     // Write arguments as JSON to stdin
-    let args_json = serde_json::to_string(arguments).map_err(|e| {
-        format!("Failed to serialize arguments: {}", e)
-    })?;
-    
+    let args_json = serde_json::to_string(arguments)
+        .map_err(|e| format!("Failed to serialize arguments: {}", e))?;
+
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(args_json.as_bytes()).await.map_err(|e| {
-            format!("Failed to write to stdin: {}", e)
-        })?;
-        stdin.flush().await.map_err(|e| {
-            format!("Failed to flush stdin: {}", e)
-        })?;
+        stdin
+            .write_all(args_json.as_bytes())
+            .await
+            .map_err(|e| format!("Failed to write to stdin: {}", e))?;
+        stdin
+            .flush()
+            .await
+            .map_err(|e| format!("Failed to flush stdin: {}", e))?;
     }
 
     // Wait for process with timeout
     let timeout_duration = Duration::from_secs(tool_config.timeout_secs);
-    let output = timeout(timeout_duration, child.wait_with_output()).await
+    let output = timeout(timeout_duration, child.wait_with_output())
+        .await
         .map_err(|_| {
-            format!("Script execution timed out after {} seconds", tool_config.timeout_secs)
+            format!(
+                "Script execution timed out after {} seconds",
+                tool_config.timeout_secs
+            )
         })?
-        .map_err(|e| {
-            format!("Failed to wait for process: {}", e)
-        })?;
+        .map_err(|e| format!("Failed to wait for process: {}", e))?;
 
     // Check exit status
     if !output.status.success() {
@@ -150,9 +159,7 @@ async fn execute_script(
     }
 
     // Return stdout
-    String::from_utf8(output.stdout).map_err(|e| {
-        format!("Script output is not valid UTF-8: {}", e)
-    })
+    String::from_utf8(output.stdout).map_err(|e| format!("Script output is not valid UTF-8: {}", e))
 }
 
 async fn execute_command(
@@ -161,7 +168,10 @@ async fn execute_command(
     settings: &LocalSettings,
 ) -> Result<String, String> {
     let command = tool_config.command.as_ref().ok_or_else(|| {
-        format!("Tool '{}' (type: command) requires 'command' field", tool_config.name)
+        format!(
+            "Tool '{}' (type: command) requires 'command' field",
+            tool_config.name
+        )
     })?;
 
     // Resolve working directory
@@ -172,9 +182,11 @@ async fn execute_command(
     };
 
     // Expand environment variables and args
-    let env_vars = McpConfig::expand_env_vars(&tool_config.env);
-    let expanded_args: Vec<String> = tool_config.args.iter()
-        .map(|arg| McpConfig::expand_env_var_in_string(arg))
+    let env_vars = expand_env_vars(&tool_config.env);
+    let expanded_args: Vec<String> = tool_config
+        .args
+        .iter()
+        .map(|arg| expand_env_var_in_string(arg))
         .collect();
 
     // Prepare command
@@ -191,33 +203,36 @@ async fn execute_command(
     }
 
     // Spawn process
-    let mut child = cmd.spawn().map_err(|e| {
-        format!("Failed to spawn command process: {}", e)
-    })?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to spawn command process: {}", e))?;
 
     // Write arguments as JSON to stdin
-    let args_json = serde_json::to_string(arguments).map_err(|e| {
-        format!("Failed to serialize arguments: {}", e)
-    })?;
-    
+    let args_json = serde_json::to_string(arguments)
+        .map_err(|e| format!("Failed to serialize arguments: {}", e))?;
+
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(args_json.as_bytes()).await.map_err(|e| {
-            format!("Failed to write to stdin: {}", e)
-        })?;
-        stdin.flush().await.map_err(|e| {
-            format!("Failed to flush stdin: {}", e)
-        })?;
+        stdin
+            .write_all(args_json.as_bytes())
+            .await
+            .map_err(|e| format!("Failed to write to stdin: {}", e))?;
+        stdin
+            .flush()
+            .await
+            .map_err(|e| format!("Failed to flush stdin: {}", e))?;
     }
 
     // Wait for process with timeout
     let timeout_duration = Duration::from_secs(tool_config.timeout_secs);
-    let output = timeout(timeout_duration, child.wait_with_output()).await
+    let output = timeout(timeout_duration, child.wait_with_output())
+        .await
         .map_err(|_| {
-            format!("Command execution timed out after {} seconds", tool_config.timeout_secs)
+            format!(
+                "Command execution timed out after {} seconds",
+                tool_config.timeout_secs
+            )
         })?
-        .map_err(|e| {
-            format!("Failed to wait for process: {}", e)
-        })?;
+        .map_err(|e| format!("Failed to wait for process: {}", e))?;
 
     // Check exit status
     if !output.status.success() {
@@ -239,9 +254,8 @@ async fn execute_command(
     }
 
     // Return stdout
-    String::from_utf8(output.stdout).map_err(|e| {
-        format!("Command output is not valid UTF-8: {}", e)
-    })
+    String::from_utf8(output.stdout)
+        .map_err(|e| format!("Command output is not valid UTF-8: {}", e))
 }
 
 /// Safely resolve a path within the base directory
@@ -251,19 +265,22 @@ fn safe_resolve_path(user_path: &str, base_dir: &Path) -> Result<PathBuf, String
     }
 
     let normalized = PathBuf::from(user_path);
-    let resolved = base_dir.join(normalized).canonicalize()
+    let resolved = base_dir
+        .join(normalized)
+        .canonicalize()
         .map_err(|e| format!("Failed to resolve path: {}", e))?;
-    
-    let base_canonical = base_dir.canonicalize()
+
+    let base_canonical = base_dir
+        .canonicalize()
         .map_err(|e| format!("Failed to canonicalize base directory: {}", e))?;
-    
+
     if !resolved.starts_with(&base_canonical) {
         return Err(format!(
             "Path traversal detected: '{}' escapes base directory",
             user_path
         ));
     }
-    
+
     Ok(resolved)
 }
 
@@ -281,4 +298,3 @@ fn get_script_extension(interpreter: &str) -> &str {
         "txt"
     }
 }
-

@@ -2,12 +2,12 @@ use crate::config::LocalToolsConfig;
 use jsonschema::{Draft, JSONSchema};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::future::Future;
+use std::path::PathBuf;
 use std::pin::Pin;
 
-use super::tools;
 use super::dynamic;
+use super::tools;
 
 #[derive(Debug, Clone)]
 pub struct LocalSettings {
@@ -22,7 +22,7 @@ impl LocalSettings {
             .as_ref()
             .map(|s| {
                 // Expand environment variables
-                crate::config::McpConfig::expand_env_var_in_string(s)
+                crate::config::expand_env_var_in_string(s)
             })
             .and_then(|s| {
                 if s.is_empty() {
@@ -47,7 +47,15 @@ pub struct LocalTool {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
-    pub handler: Box<dyn for<'a> Fn(&'a Value, &'a LocalSettings) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>> + Send + Sync>,
+    pub handler: Box<
+        dyn for<'a> Fn(
+                &'a Value,
+                &'a LocalSettings,
+            )
+                -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>>
+            + Send
+            + Sync,
+    >,
 }
 
 pub struct LocalToolRegistry {
@@ -64,7 +72,7 @@ impl LocalToolRegistry {
 
         // Register built-in tools
         registry.register_builtin_tools(config);
-        
+
         // Register dynamic tools from config
         registry.register_dynamic_tools(config);
 
@@ -88,7 +96,9 @@ impl LocalToolRegistry {
                 "echo".to_string(),
                 LocalTool {
                     name: "echo".to_string(),
-                    description: "Echo back the provided text. Useful for testing or simple text output.".to_string(),
+                    description:
+                        "Echo back the provided text. Useful for testing or simple text output."
+                            .to_string(),
                     input_schema: json!({
                         "type": "object",
                         "properties": {
@@ -102,9 +112,7 @@ impl LocalToolRegistry {
                     }),
                     handler: Box::new(|args, _settings| {
                         let args = args.clone();
-                        Box::pin(async move {
-                            tools::handle_echo(&args, _settings)
-                        })
+                        Box::pin(async move { tools::handle_echo(&args, _settings) })
                     }),
                 },
             );
@@ -124,9 +132,7 @@ impl LocalToolRegistry {
                     }),
                     handler: Box::new(|args, _settings| {
                         let args = args.clone();
-                        Box::pin(async move {
-                            tools::handle_time_now(&args, _settings)
-                        })
+                        Box::pin(async move { tools::handle_time_now(&args, _settings) })
                     }),
                 },
             );
@@ -197,17 +203,17 @@ impl LocalToolRegistry {
             if !tool_config.enabled {
                 continue;
             }
-            
+
             // Skip if no type field (built-in tool, already registered)
             if tool_config.r#type.is_none() {
                 continue;
             }
-            
+
             // Skip if tool with same name already exists (built-in takes precedence)
             if self.tools.contains_key(&tool_config.name) {
                 continue;
             }
-            
+
             // Create dynamic tool
             match dynamic::create_dynamic_tool(tool_config, &self.settings) {
                 Ok(tool) => {
@@ -215,7 +221,10 @@ impl LocalToolRegistry {
                 }
                 Err(e) => {
                     // Log error but don't fail - just skip this tool
-                    eprintln!("Warning: Failed to register dynamic tool '{}': {}", tool_config.name, e);
+                    eprintln!(
+                        "Warning: Failed to register dynamic tool '{}': {}",
+                        tool_config.name, e
+                    );
                 }
             }
         }
@@ -256,4 +265,3 @@ impl LocalToolRegistry {
         Ok(())
     }
 }
-
