@@ -285,23 +285,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .and_then(|r| r.as_str())
                 {
                     if !args.reasoning_exclude && !reasoning_content.is_empty() {
-                        println!();
-                        println!(
-                            "{}",
-                            format!(
-                                "{}[{}]{}",
-                                "┌─".dimmed(),
-                                "REASONING".cyan().bold(),
-                                "──────────────────────────────────────────────".dimmed()
-                            )
-                        );
+                        // Clean up markdown formatting for display
                         let display_reasoning =
                             reasoning_content.replace("**", "").trim().to_string();
-                        println!("{}", display_reasoning.dimmed());
-                        println!(
-                            "{}",
-                            "└──────────────────────────────────────────────────────────".dimmed()
-                        );
+                        
+                        // Use CodeBuffer to render reasoning block with dynamic width
+                        // Avoid double newline if content already ends with one
+                        let sep = if display_reasoning.ends_with('\n') { "" } else { "\n" };
+                        let reasoning_block = format!("```REASONING\n{}{}\n```", display_reasoning, sep);
+                        let mut reasoning_code_buffer = highlight::CodeBuffer::new();
+                        let formatted = reasoning_code_buffer.append(&reasoning_block);
+                        if !formatted.is_empty() {
+                            println!();
+                            print!("{}", formatted);
+                        }
+                        let remaining = reasoning_code_buffer.flush();
+                        if !remaining.is_empty() {
+                            print!("{}", remaining.trim_end());
+                        }
                         println!();
                     }
                 }
@@ -411,7 +412,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 {
                                                     Ok(result_text) => {
                                                         // Display tool result in a boxed format using CodeBuffer
-                                                        let tool_block = format!("```TOOL: {}\n{}\n```", name, result_text);
+                                                        // Avoid double newline if result_text already ends with one
+                                                        let sep = if result_text.ends_with('\n') { "" } else { "\n" };
+                                                        let tool_block = format!("```TOOL: {}\n{}{}\n```", name, result_text, sep);
                                                         let mut code_buffer = highlight::CodeBuffer::new();
                                                         let formatted = code_buffer.append(&tool_block);
                                                         if !formatted.is_empty() {
@@ -436,7 +439,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                     Err(e) => {
                                                         // Display tool error in a boxed format using CodeBuffer
                                                         let error_text = format!("Error: {}", e);
-                                                        let tool_error_block = format!("```TOOL ERROR: {}\n{}\n```", name, error_text);
+                                                        // Avoid double newline if error_text already ends with one
+                                                        let sep = if error_text.ends_with('\n') { "" } else { "\n" };
+                                                        let tool_error_block = format!("```TOOL ERROR: {}\n{}{}\n```", name, error_text, sep);
                                                         let mut code_buffer = highlight::CodeBuffer::new();
                                                         let formatted = code_buffer.append(&tool_error_block);
                                                         if !formatted.is_empty() {
@@ -464,7 +469,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             } else {
                                                 // Display tool not found error in a boxed format
                                                 let error_text = format!("Error: Tool '{}' not found", name);
-                                                let tool_error_block = format!("```TOOL ERROR: {}\n{}\n```", name, error_text);
+                                                // Avoid double newline if error_text already ends with one
+                                                let sep = if error_text.ends_with('\n') { "" } else { "\n" };
+                                                let tool_error_block = format!("```TOOL ERROR: {}\n{}{}\n```", name, error_text, sep);
                                                 let mut code_buffer = highlight::CodeBuffer::new();
                                                 let formatted = code_buffer.append(&tool_error_block);
                                                 if !formatted.is_empty() {
@@ -489,7 +496,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         } else {
                                             // Display tool not found error (local tools disabled) in a boxed format
                                             let error_text = format!("Error: Tool '{}' not found (local tools disabled)", name);
-                                            let tool_error_block = format!("```TOOL ERROR: {}\n{}\n```", name, error_text);
+                                            // Avoid double newline if error_text already ends with one
+                                            let sep = if error_text.ends_with('\n') { "" } else { "\n" };
+                                            let tool_error_block = format!("```TOOL ERROR: {}\n{}{}\n```", name, error_text, sep);
                                             let mut code_buffer = highlight::CodeBuffer::new();
                                             let formatted = code_buffer.append(&tool_error_block);
                                             if !formatted.is_empty() {
@@ -798,6 +807,7 @@ async fn process_streaming_response(
     let mut buffer = String::new();
     let mut citations: Vec<Citation> = vec![];
     let mut code_buffer = CodeBuffer::new();
+    let mut reasoning_code_buffer = CodeBuffer::new();
     let mut last_flush = std::time::Instant::now();
     let flush_interval = std::time::Duration::from_millis(50);
     let mut incomplete_line = String::new();
@@ -868,13 +878,19 @@ async fn process_streaming_response(
                         if value == "[DONE]" {
                             // Close reasoning section if it was displayed
                             if reasoning_displayed && !reasoning_exclude {
-                                // Always ensure we're on a new line before closing the box
+                                // Close reasoning block with CodeBuffer
+                                // Avoid double newline if reasoning_buffer already ends with one
+                                let sep = if reasoning_buffer.ends_with('\n') { "" } else { "\n" };
+                                let reasoning_end = format!("{}\n```", sep);
+                                let formatted = reasoning_code_buffer.append(&reasoning_end);
+                                if !formatted.is_empty() {
+                                    print!("{}", formatted);
+                                }
+                                let remaining = reasoning_code_buffer.flush();
+                                if !remaining.is_empty() {
+                                    print!("{}", remaining.trim_end());
+                                }
                                 println!();
-                                println!(
-                                    "{}",
-                                    "└──────────────────────────────────────────────────────────"
-                                        .dimmed()
-                                );
                             }
 
                             // Flush any remaining content
@@ -916,8 +932,13 @@ async fn process_streaming_response(
 
                                                 if !reasoning_exclude {
                                                     if !reasoning_displayed {
+                                                        // Start reasoning block with CodeBuffer
                                                         println!();
-                                                        println!("{}", format!("{}[{}]{}", "┌─".dimmed(), "REASONING".cyan().bold(), "──────────────────────────────────────────────".dimmed()));
+                                                        let reasoning_start = "```REASONING\n";
+                                                        let formatted = reasoning_code_buffer.append(reasoning_start);
+                                                        if !formatted.is_empty() {
+                                                            print!("{}", formatted);
+                                                        }
                                                         reasoning_displayed = true;
                                                     }
 
@@ -928,7 +949,11 @@ async fn process_streaming_response(
                                                         .to_string();
 
                                                     if !display_reasoning.is_empty() {
-                                                        print!("{}", display_reasoning.dimmed());
+                                                        // Append reasoning content to CodeBuffer
+                                                        let formatted = reasoning_code_buffer.append(&display_reasoning);
+                                                        if !formatted.is_empty() {
+                                                            print!("{}", formatted);
+                                                        }
                                                         if last_flush.elapsed() > flush_interval {
                                                             io::stdout().flush()?;
                                                             last_flush = std::time::Instant::now();
@@ -946,9 +971,18 @@ async fn process_streaming_response(
                                                     && !reasoning_exclude
                                                     && !content.trim().is_empty()
                                                 {
-                                                    // Always ensure we're on a new line before closing the box
-                                                    println!();
-                                                    println!("{}", "└──────────────────────────────────────────────────────────".dimmed());
+                                                    // Close reasoning block with CodeBuffer
+                                                    // Avoid double newline if reasoning_buffer already ends with one
+                                                    let sep = if reasoning_buffer.ends_with('\n') { "" } else { "\n" };
+                                                    let reasoning_end = format!("{}\n```", sep);
+                                                    let formatted = reasoning_code_buffer.append(&reasoning_end);
+                                                    if !formatted.is_empty() {
+                                                        print!("{}", formatted);
+                                                    }
+                                                    let remaining = reasoning_code_buffer.flush();
+                                                    if !remaining.is_empty() {
+                                                        print!("{}", remaining.trim_end());
+                                                    }
                                                     println!(); // Add spacing after reasoning block
                                                     reasoning_displayed = false;
                                                     reasoning_buffer.clear();
@@ -1016,20 +1050,19 @@ async fn process_streaming_response(
 
     // Handle case where stream ends without [DONE]
     if reasoning_displayed && !reasoning_exclude {
-        let trailing_newlines = reasoning_buffer
-            .chars()
-            .rev()
-            .take_while(|&c| c == '\n')
-            .count();
-
-        if trailing_newlines > 1 {
-            print!("\x1b[{}A", trailing_newlines - 1);
+        // Close reasoning block with CodeBuffer
+        // Avoid double newline if reasoning_buffer already ends with one
+        let sep = if reasoning_buffer.ends_with('\n') { "" } else { "\n" };
+        let reasoning_end = format!("{}\n```", sep);
+        let formatted = reasoning_code_buffer.append(&reasoning_end);
+        if !formatted.is_empty() {
+            print!("{}", formatted);
         }
-
-        println!(
-            "{}",
-            "└──────────────────────────────────────────────────────────".dimmed()
-        );
+        let remaining = reasoning_code_buffer.flush();
+        if !remaining.is_empty() {
+            print!("{}", remaining.trim_end());
+        }
+        println!();
     }
 
     let remaining = code_buffer.flush();

@@ -457,10 +457,17 @@ fn template_args(args: &[String], arguments: &Value) -> Vec<String> {
     args.iter()
         .map(|arg| {
             let mut result = arg.clone();
-            // Find all {{key}} patterns
+            
+            // Collect all matches with their byte positions first
+            // This prevents cascading replacements where a replacement value
+            // contains a placeholder pattern that gets replaced again
+            let mut replacements: Vec<(usize, usize, String)> = Vec::new();
+            
             for cap in re.captures_iter(arg) {
                 let key = &cap[1];
                 let placeholder = &cap[0];
+                let start = cap.get(0).unwrap().start();
+                let end = cap.get(0).unwrap().end();
                 
                 // Get value from arguments JSON
                 if let Some(value) = arguments.get(key) {
@@ -471,10 +478,17 @@ fn template_args(args: &[String], arguments: &Value) -> Vec<String> {
                         Value::Null => String::new(),
                         _ => serde_json::to_string(value).unwrap_or_else(|_| placeholder.to_string()),
                     };
-                    result = result.replace(placeholder, &value_str);
+                    replacements.push((start, end, value_str));
                 }
                 // If key not found, leave placeholder as-is (validation should catch missing required fields)
             }
+            
+            // Replace from end to start to preserve positions
+            replacements.sort_by(|a, b| b.0.cmp(&a.0));
+            for (start, end, replacement) in replacements {
+                result.replace_range(start..end, &replacement);
+            }
+            
             result
         })
         .collect()

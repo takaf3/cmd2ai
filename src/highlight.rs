@@ -3,6 +3,7 @@ use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style, ThemeSet};
 use syntect::parsing::SyntaxSet;
 use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
+use terminal_size::{terminal_size, Width};
 
 pub struct CodeBuffer {
     buffer: String,
@@ -25,6 +26,42 @@ impl CodeBuffer {
             theme_set: ThemeSet::load_defaults(),
             displayed_lines: 0,
         }
+    }
+
+    /// Compute target width for code block borders
+    /// Returns width between 50 and 120, defaulting to 80 if terminal size unavailable
+    fn compute_box_width(&self) -> usize {
+        if let Some((Width(w), _)) = terminal_size() {
+            let cols = w as usize;
+            cols.min(120).max(50)
+        } else {
+            80
+        }
+    }
+
+    /// Generate header line for code block with dynamic width
+    fn format_header(&self, label: &str) -> String {
+        let width = self.compute_box_width();
+        // Calculate label length: label itself + 2 brackets
+        let label_len = label.len() + 2;
+        // Account for "┌─" prefix (2 chars)
+        let dash_count = width.saturating_sub(2 + label_len);
+        let dashes = "─".repeat(dash_count.max(1));
+        format!(
+            "{}[{}]{}\n",
+            "┌─".dimmed(),
+            label.cyan(),
+            dashes.dimmed()
+        )
+    }
+
+    /// Generate footer line for code block with dynamic width
+    fn format_footer(&self) -> String {
+        let width = self.compute_box_width();
+        // Account for "└" prefix (1 char)
+        let dash_count = width.saturating_sub(1);
+        let dashes = "─".repeat(dash_count.max(1));
+        format!("{}{}", "└".dimmed(), dashes.dimmed())
     }
 
     fn find_code_block_end(&self, text: &str) -> Option<usize> {
@@ -96,12 +133,8 @@ impl CodeBuffer {
                         self.displayed_lines = 0;
 
                         // Output code block header
-                        output.push_str(&format!(
-                            "{}[{}]{}\n",
-                            "┌─".dimmed(),
-                            self.code_block_lang.as_deref().unwrap_or("code").cyan(),
-                            "─────────────────────────────────────────────────".dimmed()
-                        ));
+                        let label = self.code_block_lang.as_deref().unwrap_or("code");
+                        output.push_str(&self.format_header(label));
                     } else {
                         // Incomplete first line, wait for more content
                         self.buffer = format!("```{}", self.buffer);
@@ -139,10 +172,7 @@ impl CodeBuffer {
                     }
 
                     // Output code block footer
-                    output.push_str(&format!(
-                        "{}",
-                        "└──────────────────────────────────────────────────────────".dimmed()
-                    ));
+                    output.push_str(&self.format_footer());
 
                     // Consume the closing ``` and check what comes after
                     let after_marker = &self.buffer[code_end + 3..];
@@ -224,10 +254,7 @@ impl CodeBuffer {
                         output.push_str(&highlighted);
                     }
                 }
-                output.push_str(&format!(
-                    "{}",
-                    "└──────────────────────────────────────────────────────────".dimmed()
-                ));
+                output.push_str(&self.format_footer());
             }
         } else if !self.buffer.is_empty() {
             output.push_str(&self.buffer);
