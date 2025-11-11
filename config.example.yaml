@@ -24,13 +24,7 @@ local_tools:
   # If a tool is not listed here, it defaults to enabled
   tools:
     # Built-in tools (just enable/disable)
-    - name: echo
-      enabled: true
-    - name: time_now
-      enabled: true
     - name: read_file
-      enabled: true
-    - name: list_dir
       enabled: true
     
     # Custom script-based tool (inline Python)
@@ -69,6 +63,26 @@ local_tools:
             type: string
             description: "Text to count words in"
         required: [text]
+        additionalProperties: false
+      timeout_secs: 10
+      max_output_bytes: 262144
+    
+    # Command tool with argument templating
+    # Use {{key}} syntax to inject tool arguments into command args
+    - name: list_directory
+      enabled: true
+      type: command
+      description: "List files in a directory using ls"
+      command: ls
+      args: ["-la", "{{path}}"]  # {{path}} will be replaced with the 'path' argument value
+      # stdin_json: false  # Optional: set to false to disable sending JSON via stdin (default: true)
+      input_schema:
+        type: object
+        properties:
+          path:
+            type: string
+            description: "Path to the directory to list (relative to base_dir)"
+        required: [path]
         additionalProperties: false
       timeout_secs: 10
       max_output_bytes: 262144

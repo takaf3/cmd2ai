@@ -1,9 +1,11 @@
 use crate::config::{expand_env_var_in_string, expand_env_vars, LocalToolConfig};
+use colored::Colorize;
+use regex::Regex;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::timeout;
@@ -38,6 +40,7 @@ async fn execute_script(
     arguments: &Value,
     settings: &LocalSettings,
 ) -> Result<String, String> {
+    let start_time = Instant::now();
     let interpreter = tool_config.interpreter.as_ref().ok_or_else(|| {
         format!(
             "Tool '{}' (type: script) requires 'interpreter' field",
@@ -73,10 +76,28 @@ async fn execute_script(
                 .map_err(|e| format!("Failed to set script permissions: {}", e))?;
         }
 
+        if settings.verbose {
+            eprintln!(
+                "{}",
+                format!("[tools] Created inline script: {}", temp_file.display()).dimmed()
+            );
+        }
         temp_file
     } else if let Some(ref script_path_str) = tool_config.script_path {
         // Resolve script path relative to base_dir
-        safe_resolve_path(script_path_str, &settings.base_dir)?
+        let resolved = safe_resolve_path(script_path_str, &settings.base_dir)?;
+        if settings.verbose {
+            eprintln!(
+                "{}",
+                format!(
+                    "[tools] Resolved script_path: {} -> {}",
+                    script_path_str,
+                    resolved.display()
+                )
+                .dimmed()
+            );
+        }
+        resolved
     } else {
         return Err(format!(
             "Tool '{}' (type: script) requires either 'script' (inline) or 'script_path' field",
@@ -86,13 +107,58 @@ async fn execute_script(
 
     // Resolve working directory
     let working_dir = if let Some(ref wd) = tool_config.working_dir {
-        safe_resolve_path(wd, &settings.base_dir)?
+        let resolved = safe_resolve_path(wd, &settings.base_dir)?;
+        if settings.verbose {
+            eprintln!(
+                "{}",
+                format!(
+                    "[tools] Resolved working_dir: {} -> {}",
+                    wd,
+                    resolved.display()
+                )
+                .dimmed()
+            );
+        }
+        resolved
     } else {
         settings.base_dir.clone()
     };
 
     // Expand environment variables
     let env_vars = expand_env_vars(&tool_config.env);
+
+    // Log pre-execution info
+    if settings.verbose {
+        let env_keys: Vec<String> = env_vars.keys().cloned().collect();
+        let env_info = if env_keys.is_empty() {
+            String::new()
+        } else {
+            format!(", env={}", env_keys.join(","))
+        };
+        eprintln!(
+            "{}",
+            format!(
+                "[tools] run: {} {} (cwd={}, timeout={}s{})",
+                interpreter,
+                script_path.display(),
+                working_dir.display(),
+                tool_config.timeout_secs,
+                env_info
+            )
+            .dimmed()
+        );
+        let args_json = serde_json::to_string(arguments)
+            .unwrap_or_else(|_| "<invalid>".to_string());
+        let truncated = if args_json.len() > 100 {
+            format!("{}...", &args_json[..100])
+        } else {
+            args_json
+        };
+        eprintln!(
+            "{}",
+            format!("[tools] stdin: {}", truncated).dimmed()
+        );
+    }
 
     // Prepare command
     let mut cmd = Command::new(interpreter);
@@ -103,7 +169,7 @@ async fn execute_script(
         .stderr(Stdio::piped());
 
     // Set environment variables
-    for (key, value) in env_vars {
+    for (key, value) in &env_vars {
         cmd.env(key, value);
     }
 
@@ -139,6 +205,35 @@ async fn execute_script(
         })?
         .map_err(|e| format!("Failed to wait for process: {}", e))?;
 
+    let duration = start_time.elapsed();
+
+    // Log post-execution info
+    if settings.verbose {
+        let exit_code = output.status.code().unwrap_or(-1);
+        let stderr_preview = if !output.stderr.is_empty() {
+            let stderr_str = String::from_utf8_lossy(&output.stderr);
+            let truncated = if stderr_str.len() > 200 {
+                format!("{}...", &stderr_str[..200])
+            } else {
+                stderr_str.to_string()
+            };
+            format!(", stderr={}", truncated)
+        } else {
+            String::new()
+        };
+        eprintln!(
+            "{}",
+            format!(
+                "[tools] done: exit_code={}, duration={:.2}s, output_size={} bytes{}",
+                exit_code,
+                duration.as_secs_f64(),
+                output.stdout.len(),
+                stderr_preview
+            )
+            .dimmed()
+        );
+    }
+
     // Check exit status
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -167,6 +262,7 @@ async fn execute_command(
     arguments: &Value,
     settings: &LocalSettings,
 ) -> Result<String, String> {
+    let start_time = Instant::now();
     let command = tool_config.command.as_ref().ok_or_else(|| {
         format!(
             "Tool '{}' (type: command) requires 'command' field",
@@ -176,29 +272,95 @@ async fn execute_command(
 
     // Resolve working directory
     let working_dir = if let Some(ref wd) = tool_config.working_dir {
-        safe_resolve_path(wd, &settings.base_dir)?
+        let resolved = safe_resolve_path(wd, &settings.base_dir)?;
+        if settings.verbose {
+            eprintln!(
+                "{}",
+                format!(
+                    "[tools] Resolved working_dir: {} -> {}",
+                    wd,
+                    resolved.display()
+                )
+                .dimmed()
+            );
+        }
+        resolved
     } else {
         settings.base_dir.clone()
     };
 
-    // Expand environment variables and args
+    // Expand environment variables
     let env_vars = expand_env_vars(&tool_config.env);
-    let expanded_args: Vec<String> = tool_config
+
+    // Template arguments: replace {{key}} with values from arguments JSON
+    let env_expanded_args: Vec<String> = tool_config
         .args
         .iter()
         .map(|arg| expand_env_var_in_string(arg))
         .collect();
+    let templated_args = template_args(&env_expanded_args, arguments);
+
+    // Log pre-execution info
+    if settings.verbose {
+        let args_display: Vec<String> = templated_args
+            .iter()
+            .map(|a| {
+                if a.contains(' ') {
+                    format!("\"{}\"", a)
+                } else {
+                    a.clone()
+                }
+            })
+            .collect();
+        let cmd_line = format!("{} {}", command, args_display.join(" "));
+        let env_keys: Vec<String> = env_vars.keys().cloned().collect();
+        let env_info = if env_keys.is_empty() {
+            String::new()
+        } else {
+            format!(", env={}", env_keys.join(","))
+        };
+        eprintln!(
+            "{}",
+            format!(
+                "[tools] run: {} (cwd={}, timeout={}s{})",
+                cmd_line,
+                working_dir.display(),
+                tool_config.timeout_secs,
+                env_info
+            )
+            .dimmed()
+        );
+        if tool_config.stdin_json {
+            let args_json = serde_json::to_string(arguments)
+                .unwrap_or_else(|_| "<invalid>".to_string());
+            let truncated = if args_json.len() > 100 {
+                format!("{}...", &args_json[..100])
+            } else {
+                args_json
+            };
+            eprintln!(
+                "{}",
+                format!("[tools] stdin: {}", truncated).dimmed()
+            );
+        }
+    }
 
     // Prepare command
     let mut cmd = Command::new(command);
-    cmd.args(&expanded_args)
+    cmd.args(&templated_args)
         .current_dir(&working_dir)
-        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    // Set stdin based on stdin_json flag
+    if tool_config.stdin_json {
+        cmd.stdin(Stdio::piped());
+    } else {
+        cmd.stdin(Stdio::null());
+    }
+
     // Set environment variables
-    for (key, value) in env_vars {
+    for (key, value) in &env_vars {
         cmd.env(key, value);
     }
 
@@ -207,19 +369,21 @@ async fn execute_command(
         .spawn()
         .map_err(|e| format!("Failed to spawn command process: {}", e))?;
 
-    // Write arguments as JSON to stdin
-    let args_json = serde_json::to_string(arguments)
-        .map_err(|e| format!("Failed to serialize arguments: {}", e))?;
+    // Write arguments as JSON to stdin (only if stdin_json is true)
+    if tool_config.stdin_json {
+        let args_json = serde_json::to_string(arguments)
+            .map_err(|e| format!("Failed to serialize arguments: {}", e))?;
 
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(args_json.as_bytes())
-            .await
-            .map_err(|e| format!("Failed to write to stdin: {}", e))?;
-        stdin
-            .flush()
-            .await
-            .map_err(|e| format!("Failed to flush stdin: {}", e))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(args_json.as_bytes())
+                .await
+                .map_err(|e| format!("Failed to write to stdin: {}", e))?;
+            stdin
+                .flush()
+                .await
+                .map_err(|e| format!("Failed to flush stdin: {}", e))?;
+        }
     }
 
     // Wait for process with timeout
@@ -233,6 +397,35 @@ async fn execute_command(
             )
         })?
         .map_err(|e| format!("Failed to wait for process: {}", e))?;
+
+    let duration = start_time.elapsed();
+
+    // Log post-execution info
+    if settings.verbose {
+        let exit_code = output.status.code().unwrap_or(-1);
+        let stderr_preview = if !output.stderr.is_empty() {
+            let stderr_str = String::from_utf8_lossy(&output.stderr);
+            let truncated = if stderr_str.len() > 200 {
+                format!("{}...", &stderr_str[..200])
+            } else {
+                stderr_str.to_string()
+            };
+            format!(", stderr={}", truncated)
+        } else {
+            String::new()
+        };
+        eprintln!(
+            "{}",
+            format!(
+                "[tools] done: exit_code={}, duration={:.2}s, output_size={} bytes{}",
+                exit_code,
+                duration.as_secs_f64(),
+                output.stdout.len(),
+                stderr_preview
+            )
+            .dimmed()
+        );
+    }
 
     // Check exit status
     if !output.status.success() {
@@ -256,6 +449,35 @@ async fn execute_command(
     // Return stdout
     String::from_utf8(output.stdout)
         .map_err(|e| format!("Command output is not valid UTF-8: {}", e))
+}
+
+/// Template arguments: replace {{key}} with values from arguments JSON
+fn template_args(args: &[String], arguments: &Value) -> Vec<String> {
+    let re = Regex::new(r"\{\{([^}]+)\}\}").unwrap();
+    args.iter()
+        .map(|arg| {
+            let mut result = arg.clone();
+            // Find all {{key}} patterns
+            for cap in re.captures_iter(arg) {
+                let key = &cap[1];
+                let placeholder = &cap[0];
+                
+                // Get value from arguments JSON
+                if let Some(value) = arguments.get(key) {
+                    let value_str = match value {
+                        Value::String(s) => s.clone(),
+                        Value::Number(n) => n.to_string(),
+                        Value::Bool(b) => b.to_string(),
+                        Value::Null => String::new(),
+                        _ => serde_json::to_string(value).unwrap_or_else(|_| placeholder.to_string()),
+                    };
+                    result = result.replace(placeholder, &value_str);
+                }
+                // If key not found, leave placeholder as-is (validation should catch missing required fields)
+            }
+            result
+        })
+        .collect()
 }
 
 /// Safely resolve a path within the base directory

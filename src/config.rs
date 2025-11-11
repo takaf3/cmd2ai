@@ -142,6 +142,12 @@ pub struct LocalToolConfig {
 
     #[serde(default)]
     pub env: HashMap<String, String>, // Environment variables (with ${VAR} expansion)
+
+    // Command-specific: whether to send JSON arguments via stdin
+    // Defaults to true for backward compatibility
+    #[serde(default = "default_stdin_json")]
+    #[serde(skip_serializing_if = "is_default_stdin_json")]
+    pub stdin_json: bool,
 }
 
 impl Default for ApiConfig {
@@ -193,6 +199,12 @@ fn default_tool_timeout() -> u64 {
 }
 fn default_max_output_bytes() -> u64 {
     1_048_576 // 1MB default
+}
+fn default_stdin_json() -> bool {
+    true // Default to true for backward compatibility
+}
+fn is_default_stdin_json(value: &bool) -> bool {
+    *value == default_stdin_json()
 }
 
 /// Expand environment variables in a string using ${VAR_NAME} syntax
@@ -300,11 +312,11 @@ impl Config {
         let tools_enabled = if args.no_tools {
             false
         } else {
-            env::var("AI_TOOLS_ENABLED")
-                .ok()
-                .map(|v| matches!(v.to_lowercase().as_str(), "true" | "1" | "yes"))
-                .unwrap_or(true)
-                && json_config.tools.enabled
+            // Check env var first - if set, use its value; otherwise fall through to JSON config
+            match env::var("AI_TOOLS_ENABLED").ok() {
+                Some(v) => matches!(v.to_lowercase().as_str(), "true" | "1" | "yes"),
+                None => json_config.tools.enabled,
+            }
         };
 
         // Get local_tools config

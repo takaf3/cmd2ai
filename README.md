@@ -354,10 +354,7 @@ cmd2ai includes built-in local tools that run directly in the application (no ex
 
 ### Available Local Tools
 
-- **`echo`** - Echo back provided text. Useful for testing or simple text output.
-- **`time_now`** - Get the current date and time in ISO-8601 format.
 - **`read_file`** - Read and return the contents of a file. Limited to files within the base directory and under the size limit.
-- **`list_dir`** - List files and directories in a directory. Limited to directories within the base directory.
 
 ### Configuration
 
@@ -377,13 +374,7 @@ local_tools:
   # Per-tool configuration (optional)
   # If a tool is not listed here, it defaults to enabled
   tools:
-    - name: echo
-      enabled: true
-    - name: time_now
-      enabled: true
     - name: read_file
-      enabled: true
-    - name: list_dir
       enabled: true
 ```
 
@@ -479,7 +470,7 @@ local_tools:
 
 **For command tools:**
 - `command` - Command to execute
-- `args` - Optional command arguments (array of strings)
+- `args` - Optional command arguments (array of strings, supports `{{key}}` templating)
 
 **Optional fields (both types):**
 - `timeout_secs` - Execution timeout in seconds (default: 30)
@@ -487,9 +478,36 @@ local_tools:
 - `working_dir` - Working directory relative to `base_dir`
 - `env` - Environment variables (supports `${VAR}` expansion)
 
+**Optional fields (command tools only):**
+- `stdin_json` - Whether to send tool arguments as JSON via stdin (default: `true`). Set to `false` if the command doesn't read from stdin and you're using argument templating.
+
+#### Argument Templating for Command Tools
+
+Command tools support argument templating using `{{key}}` syntax. This allows you to inject tool arguments directly into command-line arguments:
+
+```yaml
+- name: list_directory
+  type: command
+  command: ls
+  args: ["-la", "{{path}}"]  # {{path}} is replaced with the 'path' argument value
+  stdin_json: false  # Disable stdin since ls doesn't read from stdin
+  input_schema:
+    type: object
+    properties:
+      path:
+        type: string
+    required: [path]
+```
+
+When the tool is called with `{"path": "Documents"}`, the command executed will be: `ls -la Documents`
+
+**Note**: If `stdin_json` is `false`, the tool arguments are only available via templated args. If `true` (default), arguments are sent both via stdin (as JSON) and can be templated into args.
+
 #### How Custom Tools Work
 
-1. **Input**: Tool arguments are sent to the script/command as JSON on stdin
+1. **Input**: 
+   - For scripts: Tool arguments are sent as JSON on stdin (always)
+   - For commands: Tool arguments can be templated into `args` using `{{key}}` syntax, and optionally sent as JSON on stdin (controlled by `stdin_json`)
 2. **Output**: Tool output (stdout) is captured and returned as the tool result
 3. **Validation**: Arguments are validated against the `input_schema` before execution
 4. **Security**: All paths are restricted to `base_dir`, timeouts and output limits are enforced
@@ -534,6 +552,49 @@ tools:
 local_tools:
   enabled: false
 ```
+
+### Debugging Local Tools
+
+When troubleshooting tool execution issues, enable verbose logging to see detailed information about tool calls:
+
+```bash
+# Enable verbose mode
+AI_VERBOSE=true ai "List files in Documents"
+```
+
+Or set it in your config:
+
+```yaml
+session:
+  verbose: true
+```
+
+With verbose mode enabled, you'll see detailed debug output including:
+
+- **Tool Registration**: Which tools are being registered and their configuration
+- **Tool Selection**: Which tool the AI selected and the arguments it's using
+- **Argument Validation**: Whether arguments passed validation against the schema
+- **Path Resolution**: How user-provided paths are resolved relative to `base_dir`
+- **Command Execution**: The exact command/script being run, working directory, timeout, and environment variables
+- **Execution Results**: Exit codes, execution duration, output size, and any stderr output
+
+**Example verbose output:**
+
+```
+[tools] Available tools: read_file, list_directory (base_dir=/Users/takafumi)
+[tools] Selected tool: 'list_directory' with args: {"path":"Documents"}
+[tools] Validating arguments for 'list_directory': {"path":"Documents"}
+[tools] Validation passed for 'list_directory'
+[tools] Calling tool 'list_directory' with args: {"path":"Documents"}
+[tools] run: ls -la "Documents" (cwd=/Users/takafumi, timeout=10s)
+[tools] done: exit_code=0, duration=0.05s, output_size=1234 bytes
+```
+
+This is especially useful when debugging:
+- Why a tool isn't being called (check tool registration logs)
+- Why arguments aren't working (check validation logs)
+- Why paths aren't resolving correctly (check path resolution logs)
+- Why commands fail (check execution logs for exact command and stderr)
 
 ## Conversation Memory
 

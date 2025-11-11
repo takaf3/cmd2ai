@@ -161,7 +161,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create local tools registry if enabled
     let local_tools_registry = if local_tools_enabled {
-        let settings = LocalSettings::from_config(&config.local_tools_config);
+        let settings = LocalSettings::from_config(&config.local_tools_config, config.verbose);
         Some(LocalToolRegistry::new(&config.local_tools_config, settings))
     } else {
         None
@@ -175,6 +175,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let local_tools = format_local_tools(registry);
         if !local_tools.is_empty() {
             if config.verbose {
+                let tool_names: Vec<String> = registry.list().iter().map(|t| t.name.clone()).collect();
+                eprintln!(
+                    "{}",
+                    format!(
+                        "[tools] Available tools: {} (base_dir={})",
+                        tool_names.join(", "),
+                        registry.settings().base_dir.display()
+                    )
+                    .dimmed()
+                );
+            } else {
                 println!(
                     "{}",
                     format!("Available local tools: {}", local_tools.len()).cyan()
@@ -310,104 +321,167 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let mut tool_results = Vec::new();
 
                             for tool_call in tool_calls {
-                                if let (Some(id), Some(function)) = (
-                                    tool_call.get("id").and_then(|i| i.as_str()),
-                                    tool_call.get("function"),
-                                ) {
-                                    if let (Some(name), Some(arguments_str)) = (
-                                        function.get("name").and_then(|n| n.as_str()),
-                                        function.get("arguments").and_then(|a| a.as_str()),
-                                    ) {
-                                        println!("{}", format!("Calling tool: {}...", name).cyan());
+                                // Check for required fields and report errors for malformed tool calls
+                                let id = tool_call.get("id").and_then(|i| i.as_str());
+                                let function = tool_call.get("function");
 
-                                        // Parse arguments
-                                        match serde_json::from_str::<serde_json::Value>(
-                                            arguments_str,
-                                        ) {
-                                            Ok(arguments) => {
-                                                // Execute local tool
-                                                if let Some(ref registry) = local_tools_registry {
-                                                    if registry.get(name).is_some() {
-                                                        match call_local_tool(
-                                                            registry, name, &arguments,
-                                                        )
-                                                        .await
-                                                        {
-                                                            Ok(result_text) => {
-                                                                println!("{}", result_text);
-                                                                tool_results.push(Message {
-                                                                    role: "tool".to_string(),
-                                                                    content: Some(result_text),
-                                                                    tool_calls: None,
-                                                                    tool_call_id: Some(
-                                                                        id.to_string(),
-                                                                    ),
-                                                                });
-                                                            }
-                                                            Err(e) => {
-                                                                eprintln!(
-                                                                    "{}",
-                                                                    format!(
-                                                                        "Tool execution error: {}",
-                                                                        e
-                                                                    )
-                                                                    .red()
-                                                                );
-                                                                tool_results.push(Message {
-                                                                    role: "tool".to_string(),
-                                                                    content: Some(format!(
-                                                                        "Error: {}",
-                                                                        e
-                                                                    )),
-                                                                    tool_calls: None,
-                                                                    tool_call_id: Some(
-                                                                        id.to_string(),
-                                                                    ),
-                                                                });
-                                                            }
-                                                        }
-                                                    } else {
+                                if id.is_none() {
+                                    eprintln!("{}", "Warning: Tool call missing 'id' field, skipping".yellow());
+                                    // Generate a temporary ID for error reporting
+                                    let temp_id = format!("error_{}", std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap()
+                                        .as_nanos());
+                                    tool_results.push(Message {
+                                        role: "tool".to_string(),
+                                        content: Some("Error: Tool call missing required 'id' field".to_string()),
+                                        tool_calls: None,
+                                        tool_call_id: Some(temp_id),
+                                    });
+                                    continue;
+                                }
+                                let id = id.unwrap();
+
+                                if function.is_none() {
+                                    eprintln!("{}", format!("Warning: Tool call {} missing 'function' field, skipping", id).yellow());
+                                    tool_results.push(Message {
+                                        role: "tool".to_string(),
+                                        content: Some(format!("Error: Tool call {} missing required 'function' field", id)),
+                                        tool_calls: None,
+                                        tool_call_id: Some(id.to_string()),
+                                    });
+                                    continue;
+                                }
+                                let function = function.unwrap();
+
+                                let name = function.get("name").and_then(|n| n.as_str());
+                                let arguments_str = function.get("arguments").and_then(|a| a.as_str());
+
+                                if name.is_none() {
+                                    eprintln!("{}", format!("Warning: Tool call {} missing 'function.name' field, skipping", id).yellow());
+                                    tool_results.push(Message {
+                                        role: "tool".to_string(),
+                                        content: Some(format!("Error: Tool call {} missing required 'function.name' field", id)),
+                                        tool_calls: None,
+                                        tool_call_id: Some(id.to_string()),
+                                    });
+                                    continue;
+                                }
+                                let name = name.unwrap();
+
+                                if arguments_str.is_none() {
+                                    eprintln!("{}", format!("Warning: Tool call {} missing 'function.arguments' field, skipping", id).yellow());
+                                    tool_results.push(Message {
+                                        role: "tool".to_string(),
+                                        content: Some(format!("Error: Tool call {} missing required 'function.arguments' field", id)),
+                                        tool_calls: None,
+                                        tool_call_id: Some(id.to_string()),
+                                    });
+                                    continue;
+                                }
+                                let arguments_str = arguments_str.unwrap();
+
+                                if config.verbose {
+                                    let args_preview = if arguments_str.len() > 100 {
+                                        format!("{}...", &arguments_str[..100])
+                                    } else {
+                                        arguments_str.to_string()
+                                    };
+                                    eprintln!(
+                                        "{}",
+                                        format!("[tools] Selected tool: '{}' with args: {}", name, args_preview)
+                                            .dimmed()
+                                    );
+                                }
+
+                                println!("{}", format!("Calling tool: {}...", name).cyan());
+
+                                // Parse arguments
+                                match serde_json::from_str::<serde_json::Value>(
+                                    arguments_str,
+                                ) {
+                                    Ok(arguments) => {
+                                        // Execute local tool
+                                        if let Some(ref registry) = local_tools_registry {
+                                            if registry.get(name).is_some() {
+                                                match call_local_tool(
+                                                    registry, name, &arguments,
+                                                )
+                                                .await
+                                                {
+                                                    Ok(result_text) => {
+                                                        println!("{}", result_text);
+                                                        tool_results.push(Message {
+                                                            role: "tool".to_string(),
+                                                            content: Some(result_text),
+                                                            tool_calls: None,
+                                                            tool_call_id: Some(
+                                                                id.to_string(),
+                                                            ),
+                                                        });
+                                                    }
+                                                    Err(e) => {
                                                         eprintln!(
                                                             "{}",
-                                                            format!("Tool '{}' not found", name)
-                                                                .red()
+                                                            format!(
+                                                                "Tool execution error: {}",
+                                                                e
+                                                            )
+                                                            .red()
                                                         );
                                                         tool_results.push(Message {
                                                             role: "tool".to_string(),
                                                             content: Some(format!(
-                                                                "Error: Tool '{}' not found",
-                                                                name
+                                                                "Error: {}",
+                                                                e
                                                             )),
                                                             tool_calls: None,
-                                                            tool_call_id: Some(id.to_string()),
+                                                            tool_call_id: Some(
+                                                                id.to_string(),
+                                                            ),
                                                         });
                                                     }
-                                                } else {
-                                                    eprintln!(
-                                                        "{}",
-                                                        format!("Tool '{}' not found (local tools disabled)", name).red()
-                                                    );
-                                                    tool_results.push(Message {
-                                                        role: "tool".to_string(),
-                                                        content: Some(format!(
-                                                            "Error: Tool '{}' not found",
-                                                            name
-                                                        )),
-                                                        tool_calls: None,
-                                                        tool_call_id: Some(id.to_string()),
-                                                    });
                                                 }
-                                            }
-                                            Err(err) => {
-                                                eprintln!("{}", format!("Failed to parse arguments for tool '{}' : {}", name, err).red());
+                                            } else {
+                                                eprintln!(
+                                                    "{}",
+                                                    format!("Tool '{}' not found", name)
+                                                        .red()
+                                                );
                                                 tool_results.push(Message {
                                                     role: "tool".to_string(),
-                                                    content: Some(format!("Error: failed to parse arguments for tool '{}' : {}", name, err)),
+                                                    content: Some(format!(
+                                                        "Error: Tool '{}' not found",
+                                                        name
+                                                    )),
                                                     tool_calls: None,
                                                     tool_call_id: Some(id.to_string()),
                                                 });
                                             }
+                                        } else {
+                                            eprintln!(
+                                                "{}",
+                                                format!("Tool '{}' not found (local tools disabled)", name).red()
+                                            );
+                                            tool_results.push(Message {
+                                                role: "tool".to_string(),
+                                                content: Some(format!(
+                                                    "Error: Tool '{}' not found",
+                                                    name
+                                                )),
+                                                tool_calls: None,
+                                                tool_call_id: Some(id.to_string()),
+                                            });
                                         }
+                                    }
+                                    Err(err) => {
+                                        eprintln!("{}", format!("Failed to parse arguments for tool '{}' : {}", name, err).red());
+                                        tool_results.push(Message {
+                                            role: "tool".to_string(),
+                                            content: Some(format!("Error: failed to parse arguments for tool '{}' : {}", name, err)),
+                                            tool_calls: None,
+                                            tool_call_id: Some(id.to_string()),
+                                        });
                                     }
                                 }
                             }

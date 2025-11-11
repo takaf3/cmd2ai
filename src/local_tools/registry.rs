@@ -1,4 +1,5 @@
 use crate::config::LocalToolsConfig;
+use colored::Colorize;
 use jsonschema::{Draft, JSONSchema};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -13,10 +14,11 @@ use super::tools;
 pub struct LocalSettings {
     pub base_dir: PathBuf,
     pub max_file_size_bytes: u64,
+    pub verbose: bool,
 }
 
 impl LocalSettings {
-    pub fn from_config(config: &LocalToolsConfig) -> Self {
+    pub fn from_config(config: &LocalToolsConfig, verbose: bool) -> Self {
         let base_dir = config
             .base_dir
             .as_ref()
@@ -39,6 +41,7 @@ impl LocalSettings {
         Self {
             base_dir,
             max_file_size_bytes,
+            verbose,
         }
     }
 }
@@ -90,56 +93,11 @@ impl LocalToolRegistry {
                 .unwrap_or(true) // Default to enabled if not specified
         };
 
-        // echo tool
-        if is_enabled("echo") {
-            self.tools.insert(
-                "echo".to_string(),
-                LocalTool {
-                    name: "echo".to_string(),
-                    description:
-                        "Echo back the provided text. Useful for testing or simple text output."
-                            .to_string(),
-                    input_schema: json!({
-                        "type": "object",
-                        "properties": {
-                            "text": {
-                                "type": "string",
-                                "description": "The text to echo back"
-                            }
-                        },
-                        "required": ["text"],
-                        "additionalProperties": false
-                    }),
-                    handler: Box::new(|args, _settings| {
-                        let args = args.clone();
-                        Box::pin(async move { tools::handle_echo(&args, _settings) })
-                    }),
-                },
-            );
-        }
-
-        // time_now tool
-        if is_enabled("time_now") {
-            self.tools.insert(
-                "time_now".to_string(),
-                LocalTool {
-                    name: "time_now".to_string(),
-                    description: "Get the current date and time in ISO-8601 format.".to_string(),
-                    input_schema: json!({
-                        "type": "object",
-                        "properties": {},
-                        "additionalProperties": false
-                    }),
-                    handler: Box::new(|args, _settings| {
-                        let args = args.clone();
-                        Box::pin(async move { tools::handle_time_now(&args, _settings) })
-                    }),
-                },
-            );
-        }
-
         // read_file tool
         if is_enabled("read_file") {
+            if self.settings.verbose {
+                eprintln!("{}", "[tools] Registering built-in tool: read_file".dimmed());
+            }
             self.tools.insert(
                 "read_file".to_string(),
                 LocalTool {
@@ -167,40 +125,18 @@ impl LocalToolRegistry {
             );
         }
 
-        // list_dir tool
-        if is_enabled("list_dir") {
-            self.tools.insert(
-                "list_dir".to_string(),
-                LocalTool {
-                    name: "list_dir".to_string(),
-                    description: "List files and directories in a directory. Limited to directories within the base directory.".to_string(),
-                    input_schema: json!({
-                        "type": "object",
-                        "properties": {
-                            "path": {
-                                "type": "string",
-                                "description": "Path to the directory to list (relative to base directory)"
-                            }
-                        },
-                        "required": ["path"],
-                        "additionalProperties": false
-                    }),
-                    handler: Box::new(|args, settings| {
-                        let args = args.clone();
-                        let settings = settings.clone();
-                        Box::pin(async move {
-                            tools::handle_list_dir(&args, &settings)
-                        })
-                    }),
-                },
-            );
-        }
     }
 
     fn register_dynamic_tools(&mut self, config: &LocalToolsConfig) {
         for tool_config in &config.tools {
             // Skip if not enabled
             if !tool_config.enabled {
+                if self.settings.verbose {
+                    eprintln!(
+                        "{}",
+                        format!("[tools] Skipping disabled tool: {}", tool_config.name).dimmed()
+                    );
+                }
                 continue;
             }
 
@@ -211,12 +147,29 @@ impl LocalToolRegistry {
 
             // Skip if tool with same name already exists (built-in takes precedence)
             if self.tools.contains_key(&tool_config.name) {
+                if self.settings.verbose {
+                    eprintln!(
+                        "{}",
+                        format!(
+                            "[tools] Skipping tool '{}' (built-in takes precedence)",
+                            tool_config.name
+                        )
+                        .dimmed()
+                    );
+                }
                 continue;
             }
 
             // Create dynamic tool
             match dynamic::create_dynamic_tool(tool_config, &self.settings) {
                 Ok(tool) => {
+                    if self.settings.verbose {
+                        eprintln!(
+                            "{}",
+                            format!("[tools] Registered dynamic tool: {}", tool_config.name)
+                                .dimmed()
+                        );
+                    }
                     self.tools.insert(tool_config.name.clone(), tool);
                 }
                 Err(e) => {
@@ -248,6 +201,21 @@ impl LocalToolRegistry {
             .get(tool_name)
             .ok_or_else(|| format!("Tool '{}' not found", tool_name))?;
 
+        if self.settings.verbose {
+            let args_str = serde_json::to_string(arguments)
+                .unwrap_or_else(|_| "<invalid json>".to_string());
+            let truncated = if args_str.len() > 200 {
+                format!("{}...", &args_str[..200])
+            } else {
+                args_str
+            };
+            eprintln!(
+                "{}",
+                format!("[tools] Validating arguments for '{}': {}", tool_name, truncated)
+                    .dimmed()
+            );
+        }
+
         // Compile the JSON schema
         let schema = JSONSchema::options()
             .with_draft(Draft::Draft7)
@@ -259,7 +227,22 @@ impl LocalToolRegistry {
             let error_messages: Vec<String> = errors
                 .map(|e| format!("{}: {}", e.instance_path, e.to_string()))
                 .collect();
-            return Err(error_messages.join("; "));
+            let error_msg = error_messages.join("; ");
+            if self.settings.verbose {
+                eprintln!(
+                    "{}",
+                    format!("[tools] Validation failed for '{}': {}", tool_name, error_msg)
+                        .dimmed()
+                );
+            }
+            return Err(error_msg);
+        }
+
+        if self.settings.verbose {
+            eprintln!(
+                "{}",
+                format!("[tools] Validation passed for '{}'", tool_name).dimmed()
+            );
         }
 
         Ok(())
