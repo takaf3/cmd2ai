@@ -5,6 +5,8 @@ use syntect::parsing::SyntaxSet;
 use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
 use terminal_size::{terminal_size, Width};
 
+const ANSI_RESET: &str = "\x1b[0m";
+
 pub struct CodeBuffer {
     buffer: String,
     in_code_block: bool,
@@ -48,7 +50,8 @@ impl CodeBuffer {
         let dash_count = width.saturating_sub(2 + label_len);
         let dashes = "─".repeat(dash_count.max(1));
         format!(
-            "{}[{}]{}\n",
+            "{}{}[{}]{}\n",
+            ANSI_RESET,
             "┌─".dimmed(),
             label.cyan(),
             dashes.dimmed()
@@ -58,10 +61,15 @@ impl CodeBuffer {
     /// Generate footer line for code block with dynamic width
     fn format_footer(&self) -> String {
         let width = self.compute_box_width();
-        // Account for "└" prefix (1 char)
-        let dash_count = width.saturating_sub(1);
+        // Account for "└─" prefix (2 chars) to mirror the header
+        let dash_count = width.saturating_sub(2);
         let dashes = "─".repeat(dash_count.max(1));
-        format!("\n{}{}", "└─".dimmed(), dashes.dimmed())
+        format!(
+            "\n{}{}{}", 
+            ANSI_RESET, 
+            "└─".dimmed(), 
+            dashes.dimmed()
+        )
     }
 
     fn find_code_block_end(&self, text: &str) -> Option<usize> {
