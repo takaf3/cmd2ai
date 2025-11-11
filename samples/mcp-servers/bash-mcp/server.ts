@@ -44,9 +44,15 @@ function safeResolve(userPath: string): string {
   const resolved = resolve(BASE_DIR, normalized);
   
   // Ensure the resolved path is within the base directory
-  // Check both with and without trailing slash
-  const baseWithSlash = BASE_DIR.endsWith("/") ? BASE_DIR : BASE_DIR + "/";
-  if (!resolved.startsWith(baseWithSlash) && resolved !== BASE_DIR) {
+  // Normalize base directory to avoid issues with trailing slashes
+  const normalizedBase = BASE_DIR.endsWith("/") && BASE_DIR !== "/" 
+    ? BASE_DIR.slice(0, -1) 
+    : BASE_DIR;
+  const normalizedResolved = resolved.endsWith("/") && resolved !== "/"
+    ? resolved.slice(0, -1)
+    : resolved;
+  
+  if (!normalizedResolved.startsWith(normalizedBase) && normalizedResolved !== normalizedBase) {
     throw new Error(`Path traversal detected: ${userPath} escapes base directory`);
   }
   

@@ -61,7 +61,7 @@ impl CodeBuffer {
         // Account for "└" prefix (1 char)
         let dash_count = width.saturating_sub(1);
         let dashes = "─".repeat(dash_count.max(1));
-        format!("{}{}", "└".dimmed(), dashes.dimmed())
+        format!("\n{}{}", "└─".dimmed(), dashes.dimmed())
     }
 
     fn find_code_block_end(&self, text: &str) -> Option<usize> {
@@ -150,7 +150,15 @@ impl CodeBuffer {
                 let code_end = self.find_code_block_end(&self.buffer);
                 if let Some(code_end) = code_end {
                     // Add content before the end marker to code block
-                    self.code_block_content.push_str(&self.buffer[..code_end]);
+                    // Strip trailing newline if present (the \n before ```)
+                    let content_before_marker = &self.buffer[..code_end];
+                    let stripped_newline = content_before_marker.ends_with('\n');
+                    let content_to_add = if stripped_newline {
+                        &content_before_marker[..content_before_marker.len() - 1]
+                    } else {
+                        content_before_marker
+                    };
+                    self.code_block_content.push_str(content_to_add);
 
                     // Highlight and output any remaining lines
                     let all_lines: Vec<&str> = self.code_block_content.lines().collect();
@@ -159,8 +167,9 @@ impl CodeBuffer {
                         if !remaining_lines.is_empty() {
                             let remaining_content = remaining_lines.join("\n");
                             // Add final newline only if the original content had one
+                            // and we didn't just strip a newline before the closing marker
                             let final_content =
-                                if self.code_block_content.ends_with('\n') || code_end > 0 {
+                                if self.code_block_content.ends_with('\n') && !stripped_newline {
                                     remaining_content + "\n"
                                 } else {
                                     remaining_content

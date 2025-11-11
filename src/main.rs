@@ -524,7 +524,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     Err(err) => {
                                         // Display argument parsing error in a boxed format
                                         let error_text = format!("Error: failed to parse arguments for tool '{}' : {}", name, err);
-                                        let tool_error_block = format!("```TOOL ERROR: {}\n{}\n```", name, error_text);
+                                        // Avoid double newline if error_text already ends with one
+                                        let sep = if error_text.ends_with('\n') { "" } else { "\n" };
+                                        let tool_error_block = format!("```TOOL ERROR: {}\n{}{}\n```", name, error_text, sep);
                                         let mut code_buffer = highlight::CodeBuffer::new();
                                         let formatted = code_buffer.append(&tool_error_block);
                                         if !formatted.is_empty() {
@@ -624,7 +626,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     if config.verbose {
                                         eprintln!(
                                             "{}",
-                                            "[AI] Tool calls array was empty and no assistant content provided.".dimmed()
+                                            "[AI] Tool calls array was empty; using assistant message content.".dimmed()
                                         );
                                     }
 
@@ -640,6 +642,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     println!();
                                     original_content.to_string()
                                 } else {
+                                    if config.verbose {
+                                        eprintln!(
+                                            "{}",
+                                            "[AI] Tool calls array was empty and no assistant content provided.".dimmed()
+                                        );
+                                    }
                                     "Tool calls were requested but no results were returned."
                                         .to_string()
                                 }
