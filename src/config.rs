@@ -148,6 +148,37 @@ pub struct LocalToolConfig {
     #[serde(default = "default_stdin_json")]
     #[serde(skip_serializing_if = "is_default_stdin_json")]
     pub stdin_json: bool,
+
+    // Security settings for command tools with templated arguments
+    #[serde(default = "default_restrict_to_base_dir")]
+    #[serde(skip_serializing_if = "is_default_restrict_to_base_dir")]
+    pub restrict_to_base_dir: bool,
+
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub insert_double_dash: Option<bool>, // None means auto-detect based on path placeholders
+
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template_validations: Option<HashMap<String, TemplateValidation>>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TemplateValidation {
+    #[serde(default = "default_validation_kind")]
+    pub kind: String, // "path" | "string" | "number"
+
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow_patterns: Option<Vec<String>>, // Regex patterns to allow
+
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deny_patterns: Option<Vec<String>>, // Regex patterns to deny
+
+    #[serde(default = "default_allow_absolute")]
+    #[serde(skip_serializing_if = "is_default_allow_absolute")]
+    pub allow_absolute: bool, // Allow absolute paths (only for path kind)
 }
 
 impl Default for ApiConfig {
@@ -205,6 +236,21 @@ fn default_stdin_json() -> bool {
 }
 fn is_default_stdin_json(value: &bool) -> bool {
     *value == default_stdin_json()
+}
+fn default_restrict_to_base_dir() -> bool {
+    true // Default to true for security
+}
+fn is_default_restrict_to_base_dir(value: &bool) -> bool {
+    *value == default_restrict_to_base_dir()
+}
+fn default_validation_kind() -> String {
+    "string".to_string()
+}
+fn default_allow_absolute() -> bool {
+    false // Default to false for security
+}
+fn is_default_allow_absolute(value: &bool) -> bool {
+    *value == default_allow_absolute()
 }
 
 /// Expand environment variables in a string using ${VAR_NAME} syntax

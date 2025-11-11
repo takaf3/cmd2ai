@@ -118,6 +118,7 @@ User Input → CLI Args → Config Loading → API Request → Stream Processing
 - `tools.rs`: Formats tools for LLM and executes tool calls
 - `executor.rs`: Executes custom script and command-based tools
 - `dynamic.rs`: Creates dynamic tools from configuration
+- `paths.rs`: Safe path resolution utilities (prevents path traversal attacks)
 
 **Streaming Handler (`src/highlight.rs`)**:
 - `CodeBuffer`: Stateful processor for detecting and highlighting code blocks during streaming
@@ -141,6 +142,14 @@ User Input → CLI Args → Config Loading → API Request → Stream Processing
 - Supports built-in tools (echo, time_now, read_file, list_dir) and custom tools
 - Custom tools can be script-based or command-based
 - Environment variables use `${VAR_NAME}` syntax for expansion
+
+**Security for Command Tools with Templated Arguments**:
+- Argument templating (`{{key}}` syntax) is validated to prevent injection attacks
+- Path arguments (auto-detected by name pattern `*path*`) are validated and restricted to `base_dir`
+- Option injection prevention: values starting with `-` are rejected for path arguments
+- Automatic `--` insertion before templated path arguments prevents option parsing
+- Configurable validation policies via `template_validations` map in tool config
+- See `src/local_tools/executor.rs::template_args()` for implementation details
 
 **Tool Call Processing**:
 When tools are available, the main loop in `main.rs`:

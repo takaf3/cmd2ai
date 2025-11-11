@@ -1,8 +1,8 @@
+use super::paths::safe_resolve_path;
 use super::registry::{LocalSettings, LocalToolRegistry};
 use colored::Colorize;
 use serde_json::{json, Value};
 use std::fs;
-use std::path::{Path, PathBuf};
 
 pub fn format_tools_for_llm(registry: &LocalToolRegistry) -> Vec<Value> {
     registry
@@ -116,36 +116,4 @@ pub fn handle_read_file(args: &Value, settings: &LocalSettings) -> Result<String
 
     // Read file (UTF-8 only)
     fs::read_to_string(&resolved_path).map_err(|e| format!("Failed to read file: {}", e))
-}
-
-/// Safely resolve a user-provided path within the base directory
-/// Prevents path traversal attacks
-fn safe_resolve_path(user_path: &str, base_dir: &Path) -> Result<PathBuf, String> {
-    // Basic validation: reject empty or very long paths
-    if user_path.is_empty() || user_path.len() > 4096 {
-        return Err("Invalid path: path must be non-empty and under 4096 characters".to_string());
-    }
-
-    // Normalize the path (resolves . and ..)
-    let normalized = PathBuf::from(user_path);
-
-    // Resolve against base directory
-    let resolved = base_dir
-        .join(normalized)
-        .canonicalize()
-        .map_err(|e| format!("Failed to resolve path: {}", e))?;
-
-    // Ensure the resolved path is within the base directory
-    let base_canonical = base_dir
-        .canonicalize()
-        .map_err(|e| format!("Failed to canonicalize base directory: {}", e))?;
-
-    if !resolved.starts_with(&base_canonical) {
-        return Err(format!(
-            "Path traversal detected: '{}' escapes base directory",
-            user_path
-        ));
-    }
-
-    Ok(resolved)
 }

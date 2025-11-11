@@ -1,5 +1,6 @@
 mod dynamic;
 mod executor;
+pub mod paths;
 mod registry;
 mod tools;
 

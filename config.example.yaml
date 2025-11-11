@@ -69,13 +69,25 @@ local_tools:
     
     # Command tool with argument templating
     # Use {{key}} syntax to inject tool arguments into command args
+    # SECURITY: Path arguments are automatically validated and restricted to base_dir
+    # The "--" separator is automatically inserted before templated path arguments
+    # to prevent option injection attacks.
     - name: list_directory
       enabled: true
       type: command
       description: "List files in a directory using ls"
       command: ls
       args: ["-la", "{{path}}"]  # {{path}} will be replaced with the 'path' argument value
+      # Security settings (all have secure defaults):
+      restrict_to_base_dir: true  # Restrict path arguments to base_dir (default: true)
+      insert_double_dash: true    # Insert "--" before templated args to prevent option injection (default: auto-detect)
       # stdin_json: false  # Optional: set to false to disable sending JSON via stdin (default: true)
+      # Explicit validation policy (optional - path arguments are auto-detected)
+      template_validations:
+        path:
+          kind: path
+          allow_absolute: false  # Reject absolute paths (default: false)
+          # deny_patterns: ["\\.\\./"]  # Optional: deny specific patterns
       input_schema:
         type: object
         properties:
@@ -83,6 +95,35 @@ local_tools:
             type: string
             description: "Path to the directory to list (relative to base_dir)"
         required: [path]
+        additionalProperties: false
+      timeout_secs: 10
+      max_output_bytes: 262144
+    
+    # Example: Command tool with non-path templated arguments
+    # For non-path arguments, you can use pattern validation
+    - name: search_text
+      enabled: true
+      type: command
+      description: "Search for text in files using grep"
+      command: grep
+      args: ["-r", "{{pattern}}", "{{directory}}"]
+      template_validations:
+        pattern:
+          kind: string
+          # Allow only alphanumeric and common regex characters
+          allow_patterns: ["^[a-zA-Z0-9\\s\\-_.*+?()|]+$"]
+        directory:
+          kind: path  # Explicitly mark as path for validation
+      input_schema:
+        type: object
+        properties:
+          pattern:
+            type: string
+            description: "Search pattern"
+          directory:
+            type: string
+            description: "Directory to search in (relative to base_dir)"
+        required: [pattern, directory]
         additionalProperties: false
       timeout_secs: 10
       max_output_bytes: 262144

@@ -432,7 +432,7 @@ local_tools:
 
 #### Command-Based Tools
 
-Command tools execute external programs:
+Command tools execute external programs. You can use argument templating with `{{key}}` syntax to inject tool arguments into command-line arguments:
 
 ```yaml
 local_tools:
@@ -453,6 +453,24 @@ local_tools:
         additionalProperties: false
       timeout_secs: 10
       max_output_bytes: 262144  # 256KB
+    
+    # Example with argument templating
+    - name: list_directory
+      enabled: true
+      type: command
+      description: "List files in a directory using ls"
+      command: ls
+      args: ["-la", "{{path}}"]  # {{path}} will be replaced with the 'path' argument
+      input_schema:
+        type: object
+        properties:
+          path:
+            type: string
+            description: "Path to the directory to list (relative to base_dir)"
+        required: [path]
+        additionalProperties: false
+      timeout_secs: 10
+      max_output_bytes: 262144
 ```
 
 #### Tool Configuration Fields
@@ -531,6 +549,53 @@ print(result)  # Output becomes tool result
 - **Path Validation**: All paths are validated and normalized to ensure they stay within the base directory.
 - **Execution Limits**: Custom tools have configurable timeouts and output size limits to prevent runaway processes.
 - **Sandboxing**: Script paths and working directories are restricted to `base_dir`.
+
+#### Security with Templated Command Arguments
+
+When using argument templating in command-based tools (e.g., `args: ["-la", "{{path}}"]`), cmd2ai implements several security measures to prevent argument injection and path traversal attacks:
+
+**Automatic Path Validation:**
+- Arguments with names matching `*path*` (case-insensitive) are automatically treated as paths
+- Path arguments are validated and canonicalized to ensure they stay within `base_dir`
+- Absolute paths are rejected by default (unless explicitly allowed)
+- Path traversal attempts (e.g., `../../../etc/passwd`) are blocked
+
+**Option Injection Prevention:**
+- Values starting with `-` are rejected for path arguments (prevents injecting command-line options)
+- The `--` separator is automatically inserted before templated path arguments to prevent option parsing
+- This ensures that even if an attacker tries to inject `--help` or similar, it's treated as a filename
+
+**Explicit Validation Policies:**
+You can configure explicit validation policies for templated arguments:
+
+```yaml
+local_tools:
+  tools:
+    - name: list_directory
+      type: command
+      command: ls
+      args: ["-la", "{{path}}"]
+      # Security settings (all have secure defaults)
+      restrict_to_base_dir: true  # Restrict paths to base_dir (default: true)
+      insert_double_dash: true     # Insert "--" before templated args (default: auto-detect)
+      template_validations:
+        path:
+          kind: path               # Explicitly mark as path
+          allow_absolute: false    # Reject absolute paths (default: false)
+          deny_patterns: ["\\.\\./"]  # Optional: deny specific patterns
+```
+
+**When to Disable Security Features:**
+- Setting `restrict_to_base_dir: false` disables path validation (not recommended)
+- Setting `insert_double_dash: false` disables option injection prevention (not recommended)
+- Only disable these features if you fully understand the security implications and trust all tool call arguments
+
+**Best Practices:**
+1. Always use relative paths in tool arguments (they'll be resolved relative to `base_dir`)
+2. Use explicit `template_validations` for non-path arguments that need pattern matching
+3. Keep `base_dir` restricted to a safe directory (default `$HOME` is reasonable)
+4. Review tool configurations before enabling them in production
+5. Use verbose mode (`AI_VERBOSE=true`) to audit tool calls during development
 
 ### Disabling Tools
 
@@ -619,16 +684,27 @@ This Rust implementation uses:
 
 ## Development
 
-The project includes a Makefile with several helpful commands:
+See [CLAUDE.md](CLAUDE.md) for detailed development documentation.
 
-```bash
-make          # Build release binary (default)
-make install  # Build and install binary and ZSH widget
-make uninstall # Remove installed files
-make clean    # Clean build artifacts
-make dev      # Build debug binary
-make test     # Run tests
-make fmt      # Format code
-make lint     # Run clippy linter
-make check    # Check compilation
-```
+## Changelog
+
+### Version 0.2.2 (Security Release)
+
+**Security Fixes:**
+- **Fixed argument injection vulnerability in templated command arguments**: Path arguments in command-based tools are now validated and restricted to `base_dir` by default
+- **Added option injection prevention**: Values starting with `-` are rejected for path arguments, and `--` separator is automatically inserted before templated path arguments
+- **Enhanced path validation**: All templated path arguments are canonicalized and validated to prevent path traversal attacks
+- **Configurable validation policies**: Added `template_validations` configuration for fine-grained control over argument validation
+
+**New Features:**
+- Added `restrict_to_base_dir` configuration option (default: `true`) for command tools
+- Added `insert_double_dash` configuration option (default: auto-detect) for option injection prevention
+- Added `template_validations` configuration for explicit validation policies per argument
+
+**Documentation:**
+- Added comprehensive security documentation for templated command arguments
+- Updated configuration examples with secure defaults
+
+### Version 0.2.1
+
+- Initial release with local tools support

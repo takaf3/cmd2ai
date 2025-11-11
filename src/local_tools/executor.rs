@@ -1,15 +1,15 @@
-use crate::config::{expand_env_var_in_string, expand_env_vars, LocalToolConfig};
+use crate::config::{expand_env_var_in_string, expand_env_vars, LocalToolConfig, TemplateValidation};
 use colored::Colorize;
 use regex::Regex;
 use serde_json::Value;
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::timeout;
 
+use super::paths::{canonicalize_within_base_dir, is_option_like, safe_resolve_path};
 use super::registry::LocalSettings;
 
 /// Execute a dynamic tool (script or command)
@@ -298,7 +298,12 @@ async fn execute_command(
         .iter()
         .map(|arg| expand_env_var_in_string(arg))
         .collect();
-    let templated_args = template_args(&env_expanded_args, arguments);
+    let templated_args = template_args(
+        &env_expanded_args,
+        arguments,
+        tool_config,
+        settings,
+    )?;
 
     // Log pre-execution info
     if settings.verbose {
@@ -452,73 +457,213 @@ async fn execute_command(
 }
 
 /// Template arguments: replace {{key}} with values from arguments JSON
-fn template_args(args: &[String], arguments: &Value) -> Vec<String> {
+/// This function validates and sanitizes templated values, especially paths,
+/// to prevent argument injection and path traversal attacks.
+fn template_args(
+    args: &[String],
+    arguments: &Value,
+    tool_config: &LocalToolConfig,
+    settings: &LocalSettings,
+) -> Result<Vec<String>, String> {
     let re = Regex::new(r"\{\{([^}]+)\}\}").unwrap();
-    args.iter()
-        .map(|arg| {
-            let mut result = arg.clone();
+    let mut has_path_placeholders = false;
+    let mut templated_args = Vec::new();
+    let mut args_with_placeholders = Vec::new(); // Track which args had placeholders BEFORE substitution
+
+    for (arg_idx, arg) in args.iter().enumerate() {
+        let mut result = arg.clone();
+        let mut had_placeholder = false;
+        
+        // Collect all matches with their byte positions first
+        // This prevents cascading replacements where a replacement value
+        // contains a placeholder pattern that gets replaced again
+        let mut replacements: Vec<(usize, usize, String)> = Vec::new();
+        
+        for cap in re.captures_iter(arg) {
+            had_placeholder = true;
+            let key = &cap[1];
+            let placeholder = &cap[0];
+            let start = cap.get(0).unwrap().start();
+            let end = cap.get(0).unwrap().end();
             
-            // Collect all matches with their byte positions first
-            // This prevents cascading replacements where a replacement value
-            // contains a placeholder pattern that gets replaced again
-            let mut replacements: Vec<(usize, usize, String)> = Vec::new();
-            
-            for cap in re.captures_iter(arg) {
-                let key = &cap[1];
-                let placeholder = &cap[0];
-                let start = cap.get(0).unwrap().start();
-                let end = cap.get(0).unwrap().end();
+            // Get value from arguments JSON
+            if let Some(value) = arguments.get(key) {
+                let value_str = match value {
+                    Value::String(s) => s.clone(),
+                    Value::Number(n) => n.to_string(),
+                    Value::Bool(b) => b.to_string(),
+                    Value::Null => String::new(),
+                    _ => serde_json::to_string(value).unwrap_or_else(|_| placeholder.to_string()),
+                };
                 
-                // Get value from arguments JSON
-                if let Some(value) = arguments.get(key) {
-                    let value_str = match value {
-                        Value::String(s) => s.clone(),
-                        Value::Number(n) => n.to_string(),
-                        Value::Bool(b) => b.to_string(),
-                        Value::Null => String::new(),
-                        _ => serde_json::to_string(value).unwrap_or_else(|_| placeholder.to_string()),
-                    };
-                    replacements.push((start, end, value_str));
+                // Determine validation policy for this key
+                let validation = get_validation_policy(key, tool_config);
+                
+                // Validate and transform the value based on policy
+                let validated_value = validate_and_transform_value(
+                    key,
+                    &value_str,
+                    &validation,
+                    tool_config,
+                    settings,
+                )?;
+                
+                if validation.kind == "path" {
+                    has_path_placeholders = true;
                 }
-                // If key not found, leave placeholder as-is (validation should catch missing required fields)
+                
+                replacements.push((start, end, validated_value));
             }
-            
-            // Replace from end to start to preserve positions
-            replacements.sort_by(|a, b| b.0.cmp(&a.0));
-            for (start, end, replacement) in replacements {
-                result.replace_range(start..end, &replacement);
-            }
-            
-            result
-        })
-        .collect()
-}
-
-/// Safely resolve a path within the base directory
-fn safe_resolve_path(user_path: &str, base_dir: &Path) -> Result<PathBuf, String> {
-    if user_path.is_empty() || user_path.len() > 4096 {
-        return Err("Invalid path: path must be non-empty and under 4096 characters".to_string());
+            // If key not found, leave placeholder as-is (validation should catch missing required fields)
+        }
+        
+        // Replace from end to start to preserve positions
+        replacements.sort_by(|a, b| b.0.cmp(&a.0));
+        for (start, end, replacement) in replacements {
+            result.replace_range(start..end, &replacement);
+        }
+        
+        templated_args.push(result);
+        if had_placeholder {
+            args_with_placeholders.push(arg_idx);
+        }
     }
 
-    let normalized = PathBuf::from(user_path);
-    let resolved = base_dir
-        .join(normalized)
-        .canonicalize()
-        .map_err(|e| format!("Failed to resolve path: {}", e))?;
+    // Insert "--" before first templated argument if needed to prevent option injection
+    let should_insert_double_dash = match tool_config.insert_double_dash {
+        Some(true) => true,
+        Some(false) => false,
+        None => has_path_placeholders, // Auto-detect: insert if any path placeholders exist
+    };
 
-    let base_canonical = base_dir
-        .canonicalize()
-        .map_err(|e| format!("Failed to canonicalize base directory: {}", e))?;
-
-    if !resolved.starts_with(&base_canonical) {
-        return Err(format!(
-            "Path traversal detected: '{}' escapes base directory",
-            user_path
-        ));
+    if should_insert_double_dash {
+        // Find the first argument that contained a templated value (before substitution)
+        if let Some(&first_templated_idx) = args_with_placeholders.first() {
+            let mut final_args = Vec::new();
+            for (idx, arg) in templated_args.iter().enumerate() {
+                if idx == first_templated_idx {
+                    final_args.push("--".to_string());
+                }
+                final_args.push(arg.clone());
+            }
+            Ok(final_args)
+        } else {
+            // No templated arguments, so nothing to insert before
+            Ok(templated_args)
+        }
+    } else {
+        Ok(templated_args)
     }
-
-    Ok(resolved)
 }
+
+/// Get validation policy for a template key
+fn get_validation_policy(key: &str, tool_config: &LocalToolConfig) -> TemplateValidation {
+    // Check if explicit validation is configured
+    if let Some(ref validations) = tool_config.template_validations {
+        if let Some(validation) = validations.get(key) {
+            return validation.clone();
+        }
+    }
+    
+    // Heuristic: treat keys matching path pattern as paths
+    let path_pattern = Regex::new(r"(?i)^(.*_)?path(s)?$").unwrap();
+    if path_pattern.is_match(key) {
+        TemplateValidation {
+            kind: "path".to_string(),
+            allow_patterns: None,
+            deny_patterns: None,
+            allow_absolute: false,
+        }
+    } else {
+        // Default to string validation
+        TemplateValidation {
+            kind: "string".to_string(),
+            allow_patterns: None,
+            deny_patterns: None,
+            allow_absolute: false,
+        }
+    }
+}
+
+/// Validate and transform a templated value based on its validation policy
+fn validate_and_transform_value(
+    key: &str,
+    value: &str,
+    validation: &TemplateValidation,
+    tool_config: &LocalToolConfig,
+    settings: &LocalSettings,
+) -> Result<String, String> {
+    match validation.kind.as_str() {
+        "path" => {
+            // Reject option-like values (unless explicitly allowed)
+            if is_option_like(value) {
+                return Err(format!(
+                    "Invalid path argument '{}': value '{}' looks like a command-line option. \
+                    Path arguments cannot start with '-'. If you need to pass options, \
+                    configure template_validations for '{}' with allow_patterns.",
+                    key, value, key
+                ));
+            }
+
+            // If restrict_to_base_dir is enabled (default), validate path
+            if tool_config.restrict_to_base_dir {
+                // Check if absolute paths are allowed
+                if value.starts_with('/') && !validation.allow_absolute {
+                    return Err(format!(
+                        "Invalid path argument '{}': absolute path '{}' is not allowed. \
+                        Use a relative path instead, or set allow_absolute: true in template_validations.",
+                        key, value
+                    ));
+                }
+
+                // Validate and canonicalize the path
+                let canonical_path = canonicalize_within_base_dir(value, &settings.base_dir)
+                    .map_err(|e| format!("Invalid path argument '{}': {}", key, e))?;
+                
+                Ok(canonical_path)
+            } else {
+                // Path restriction disabled - just return as-is (not recommended)
+                Ok(value.to_string())
+            }
+        }
+        "string" | _ => {
+            // Apply regex pattern validation if configured
+            if let Some(ref allow_patterns) = validation.allow_patterns {
+                let mut matched = false;
+                for pattern in allow_patterns {
+                    let re = Regex::new(pattern)
+                        .map_err(|e| format!("Invalid allow_pattern regex '{}': {}", pattern, e))?;
+                    if re.is_match(value) {
+                        matched = true;
+                        break;
+                    }
+                }
+                if !matched {
+                    return Err(format!(
+                        "Invalid string argument '{}': value '{}' does not match any allow_pattern",
+                        key, value
+                    ));
+                }
+            }
+
+            if let Some(ref deny_patterns) = validation.deny_patterns {
+                for pattern in deny_patterns {
+                    let re = Regex::new(pattern)
+                        .map_err(|e| format!("Invalid deny_pattern regex '{}': {}", pattern, e))?;
+                    if re.is_match(value) {
+                        return Err(format!(
+                            "Invalid string argument '{}': value '{}' matches deny_pattern '{}'",
+                            key, value, pattern
+                        ));
+                    }
+                }
+            }
+
+            Ok(value.to_string())
+        }
+    }
+}
+
 
 /// Get script file extension based on interpreter
 fn get_script_extension(interpreter: &str) -> &str {
