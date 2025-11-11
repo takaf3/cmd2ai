@@ -504,7 +504,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 let tool_result: Option<Result<serde_json::Value, String>> = if let Some(ref registry) = local_tools_registry {
                                                     if registry.get(name).is_some() {
                                                         // Execute local tool
-                                                        Some(match call_local_tool(registry, name, &arguments) {
+                                                        Some(match call_local_tool(registry, name, &arguments).await {
                                                             Ok(result_text) => {
                                                                 println!("{}", result_text);
                                                                 Ok(serde_json::json!({

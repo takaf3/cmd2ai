@@ -149,6 +149,54 @@ pub struct LocalToolConfig {
     pub enabled: bool,
     #[serde(default)]
     pub settings: serde_json::Value,
+    
+    // Dynamic tool fields (optional - only for custom tools)
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub r#type: Option<String>, // "script" or "command"
+    
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_schema: Option<serde_json::Value>,
+    
+    // Script-specific fields
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interpreter: Option<String>, // e.g., "python3", "node", "bash"
+    
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub script: Option<String>, // Inline script content
+    
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub script_path: Option<String>, // Path to script file (relative to base_dir)
+    
+    // Command-specific fields
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    
+    #[serde(default)]
+    pub args: Vec<String>,
+    
+    // Common optional settings
+    #[serde(default = "default_tool_timeout")]
+    pub timeout_secs: u64,
+    
+    #[serde(default = "default_max_output_bytes")]
+    pub max_output_bytes: u64,
+    
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub working_dir: Option<String>, // Relative to base_dir
+    
+    #[serde(default)]
+    pub env: HashMap<String, String>, // Environment variables (with ${VAR} expansion)
 }
 
 impl Default for ApiConfig {
@@ -231,6 +279,12 @@ fn default_local_tools_enabled() -> bool {
 }
 fn default_max_file_size_mb() -> u64 {
     10
+}
+fn default_tool_timeout() -> u64 {
+    30
+}
+fn default_max_output_bytes() -> u64 {
+    1_048_576 // 1MB default
 }
 
 impl Default for ToolsConfig {

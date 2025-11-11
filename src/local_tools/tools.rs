@@ -20,7 +20,7 @@ pub fn format_tools_for_llm(registry: &LocalToolRegistry) -> Vec<Value> {
         .collect()
 }
 
-pub fn call_local_tool(
+pub async fn call_local_tool(
     registry: &LocalToolRegistry,
     tool_name: &str,
     arguments: &Value,
@@ -33,9 +33,9 @@ pub fn call_local_tool(
         .get(tool_name)
         .ok_or_else(|| format!("Tool '{}' not found", tool_name))?;
 
-    // Call the handler
-    let handler = tool.handler;
-    handler(arguments, registry.settings())
+    // Call the handler (now async)
+    let handler = &tool.handler;
+    handler(arguments, registry.settings()).await
 }
 
 // Tool handlers

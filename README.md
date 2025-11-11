@@ -464,11 +464,132 @@ local_tools:
       enabled: true
 ```
 
+### Creating Custom Tools
+
+You can create your own custom tools directly in the config file without modifying code. Custom tools can be either **script-based** (inline or from file) or **command-based** (external executables).
+
+#### Script-Based Tools
+
+Script tools run code using an interpreter (Python, Node.js, Bash, etc.):
+
+```yaml
+local_tools:
+  tools:
+    # Inline Python script
+    - name: upper
+      enabled: true
+      type: script
+      description: "Convert text to uppercase"
+      interpreter: python3
+      script: |
+        import sys, json
+        data = json.load(sys.stdin)
+        text = data.get("text", "")
+        print(text.upper())
+      input_schema:
+        type: object
+        properties:
+          text:
+            type: string
+            description: "Text to convert to uppercase"
+        required: [text]
+        additionalProperties: false
+      timeout_secs: 10
+      max_output_bytes: 1048576  # 1MB
+    
+    # Script from file (relative to base_dir)
+    - name: my_script_tool
+      enabled: true
+      type: script
+      description: "Run a custom script from file"
+      interpreter: python3
+      script_path: scripts/my_tool.py
+      input_schema:
+        type: object
+        properties:
+          input:
+            type: string
+        required: [input]
+      timeout_secs: 30
+      working_dir: scripts  # Optional: change working directory
+      env:  # Optional: environment variables (supports ${VAR} expansion)
+        CUSTOM_VAR: ${HOME}/custom
+```
+
+#### Command-Based Tools
+
+Command tools execute external programs:
+
+```yaml
+local_tools:
+  tools:
+    - name: word_count
+      enabled: true
+      type: command
+      description: "Count words in text using wc command"
+      command: wc
+      args: ["-w"]
+      input_schema:
+        type: object
+        properties:
+          text:
+            type: string
+            description: "Text to count words in"
+        required: [text]
+        additionalProperties: false
+      timeout_secs: 10
+      max_output_bytes: 262144  # 256KB
+```
+
+#### Tool Configuration Fields
+
+**Required fields:**
+- `name` - Unique tool name
+- `type` - Either `"script"` or `"command"`
+- `description` - Tool description shown to the AI
+- `input_schema` - JSON Schema defining tool parameters
+- `enabled` - Enable/disable the tool
+
+**For script tools:**
+- `interpreter` - Interpreter command (e.g., `python3`, `node`, `bash`)
+- `script` OR `script_path` - Inline script content or path to script file
+
+**For command tools:**
+- `command` - Command to execute
+- `args` - Optional command arguments (array of strings)
+
+**Optional fields (both types):**
+- `timeout_secs` - Execution timeout in seconds (default: 30)
+- `max_output_bytes` - Maximum output size in bytes (default: 1MB)
+- `working_dir` - Working directory relative to `base_dir`
+- `env` - Environment variables (supports `${VAR}` expansion)
+
+#### How Custom Tools Work
+
+1. **Input**: Tool arguments are sent to the script/command as JSON on stdin
+2. **Output**: Tool output (stdout) is captured and returned as the tool result
+3. **Validation**: Arguments are validated against the `input_schema` before execution
+4. **Security**: All paths are restricted to `base_dir`, timeouts and output limits are enforced
+
+#### Example: Reading JSON from stdin
+
+Your script should read JSON from stdin:
+
+```python
+import sys, json
+data = json.load(sys.stdin)
+# Process data
+result = process(data)
+print(result)  # Output becomes tool result
+```
+
 ### Security Considerations
 
 - **Base Directory**: All file operations are restricted to the configured `base_dir` (defaults to `$HOME`). Path traversal attacks are prevented.
 - **File Size Limits**: The `read_file` tool enforces a maximum file size (default 10MB) to prevent reading huge files.
 - **Path Validation**: All paths are validated and normalized to ensure they stay within the base directory.
+- **Execution Limits**: Custom tools have configurable timeouts and output size limits to prevent runaway processes.
+- **Sandboxing**: Script paths and working directories are restricted to `base_dir`.
 
 ### Disabling Tools
 

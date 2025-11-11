@@ -3,8 +3,11 @@ use jsonschema::{Draft, JSONSchema};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::future::Future;
+use std::pin::Pin;
 
 use super::tools;
+use super::dynamic;
 
 #[derive(Debug, Clone)]
 pub struct LocalSettings {
@@ -40,12 +43,11 @@ impl LocalSettings {
     }
 }
 
-#[derive(Debug, Clone)]
 pub struct LocalTool {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
-    pub handler: fn(&Value, &LocalSettings) -> Result<String, String>,
+    pub handler: Box<dyn for<'a> Fn(&'a Value, &'a LocalSettings) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>> + Send + Sync>,
 }
 
 pub struct LocalToolRegistry {
@@ -62,6 +64,9 @@ impl LocalToolRegistry {
 
         // Register built-in tools
         registry.register_builtin_tools(config);
+        
+        // Register dynamic tools from config
+        registry.register_dynamic_tools(config);
 
         registry
     }
@@ -95,7 +100,12 @@ impl LocalToolRegistry {
                         "required": ["text"],
                         "additionalProperties": false
                     }),
-                    handler: tools::handle_echo,
+                    handler: Box::new(|args, _settings| {
+                        let args = args.clone();
+                        Box::pin(async move {
+                            tools::handle_echo(&args, _settings)
+                        })
+                    }),
                 },
             );
         }
@@ -112,7 +122,12 @@ impl LocalToolRegistry {
                         "properties": {},
                         "additionalProperties": false
                     }),
-                    handler: tools::handle_time_now,
+                    handler: Box::new(|args, _settings| {
+                        let args = args.clone();
+                        Box::pin(async move {
+                            tools::handle_time_now(&args, _settings)
+                        })
+                    }),
                 },
             );
         }
@@ -135,7 +150,13 @@ impl LocalToolRegistry {
                         "required": ["path"],
                         "additionalProperties": false
                     }),
-                    handler: tools::handle_read_file,
+                    handler: Box::new(|args, settings| {
+                        let args = args.clone();
+                        let settings = settings.clone();
+                        Box::pin(async move {
+                            tools::handle_read_file(&args, &settings)
+                        })
+                    }),
                 },
             );
         }
@@ -158,9 +179,45 @@ impl LocalToolRegistry {
                         "required": ["path"],
                         "additionalProperties": false
                     }),
-                    handler: tools::handle_list_dir,
+                    handler: Box::new(|args, settings| {
+                        let args = args.clone();
+                        let settings = settings.clone();
+                        Box::pin(async move {
+                            tools::handle_list_dir(&args, &settings)
+                        })
+                    }),
                 },
             );
+        }
+    }
+
+    fn register_dynamic_tools(&mut self, config: &LocalToolsConfig) {
+        for tool_config in &config.tools {
+            // Skip if not enabled
+            if !tool_config.enabled {
+                continue;
+            }
+            
+            // Skip if no type field (built-in tool, already registered)
+            if tool_config.r#type.is_none() {
+                continue;
+            }
+            
+            // Skip if tool with same name already exists (built-in takes precedence)
+            if self.tools.contains_key(&tool_config.name) {
+                continue;
+            }
+            
+            // Create dynamic tool
+            match dynamic::create_dynamic_tool(tool_config, &self.settings) {
+                Ok(tool) => {
+                    self.tools.insert(tool_config.name.clone(), tool);
+                }
+                Err(e) => {
+                    // Log error but don't fail - just skip this tool
+                    eprintln!("Warning: Failed to register dynamic tool '{}': {}", tool_config.name, e);
+                }
+            }
         }
     }
 

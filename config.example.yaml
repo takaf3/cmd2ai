@@ -23,6 +23,7 @@ local_tools:
   # Per-tool configuration (optional)
   # If a tool is not listed here, it defaults to enabled
   tools:
+    # Built-in tools (just enable/disable)
     - name: echo
       enabled: true
     - name: time_now
@@ -31,6 +32,64 @@ local_tools:
       enabled: true
     - name: list_dir
       enabled: true
+    
+    # Custom script-based tool (inline Python)
+    - name: upper
+      enabled: true
+      type: script
+      description: "Convert text to uppercase"
+      interpreter: python3
+      script: |
+        import sys, json
+        data = json.load(sys.stdin)
+        text = data.get("text", "")
+        print(text.upper())
+      input_schema:
+        type: object
+        properties:
+          text:
+            type: string
+            description: "Text to convert to uppercase"
+        required: [text]
+        additionalProperties: false
+      timeout_secs: 10
+      max_output_bytes: 1048576
+    
+    # Custom command-based tool
+    - name: word_count
+      enabled: true
+      type: command
+      description: "Count words in text using wc command"
+      command: wc
+      args: ["-w"]
+      input_schema:
+        type: object
+        properties:
+          text:
+            type: string
+            description: "Text to count words in"
+        required: [text]
+        additionalProperties: false
+      timeout_secs: 10
+      max_output_bytes: 262144
+    
+    # Custom script from file
+    # - name: my_script_tool
+    #   enabled: true
+    #   type: script
+    #   description: "Run a custom script from file"
+    #   interpreter: python3
+    #   script_path: scripts/my_tool.py  # Relative to base_dir
+    #   input_schema:
+    #     type: object
+    #     properties:
+    #       input:
+    #         type: string
+    #     required: [input]
+    #   timeout_secs: 30
+    #   working_dir: scripts  # Optional: change working directory
+    #   env:  # Optional: environment variables
+    #     CUSTOM_VAR: ${HOME}/custom
 
 # API Configuration
 api:
