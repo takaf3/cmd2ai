@@ -7,6 +7,9 @@ PREFIX ?= $(HOME)/.local
 BINDIR = $(PREFIX)/bin
 ZSHDIR = $(HOME)/.config/zsh/functions
 
+# Optional components
+WITH_WEBSEARCH ?= 0
+
 # Binary name
 BINARY = ai
 
@@ -29,6 +32,11 @@ install: build
 	@echo "Installing ZSH widget to $(ZSHDIR)..."
 	@mkdir -p $(ZSHDIR)
 	@cp ai-widget.zsh $(ZSHDIR)/
+	@if [ "$(WITH_WEBSEARCH)" = "1" ] || [ "$(WITH_WEBSEARCH)" = "yes" ]; then \
+		echo "Installing websearch script (ask) to $(BINDIR)..."; \
+		cp scripts/ask $(BINDIR)/ask; \
+		chmod +x $(BINDIR)/ask; \
+	fi
 	@echo ""
 	@echo "Installation complete!"
 	@echo ""
@@ -39,6 +47,11 @@ install: build
 	@echo "  source $(ZSHDIR)/ai-widget.zsh"
 	@echo ""
 
+# Install including websearch function
+.PHONY: install-websearch
+install-websearch: WITH_WEBSEARCH=1
+install-websearch: install
+
 # Uninstall
 .PHONY: uninstall
 uninstall:
@@ -46,6 +59,8 @@ uninstall:
 	@rm -f $(BINDIR)/$(BINARY)
 	@echo "Removing ZSH widget..."
 	@rm -f $(ZSHDIR)/ai-widget.zsh
+	@echo "Removing websearch script (if present)..."
+	@rm -f $(BINDIR)/ask
 	@echo "Uninstall complete!"
 
 # Clean build artifacts
@@ -84,6 +99,8 @@ help:
 	@echo "Available targets:"
 	@echo "  make          - Build release binary (default)"
 	@echo "  make install  - Build and install binary and ZSH widget"
+	@echo "                  Add WITH_WEBSEARCH=1 to also install 'ask' script to $(BINDIR)"
+	@echo "  make install-websearch - Install with websearch script enabled (same as WITH_WEBSEARCH=1)"
 	@echo "  make uninstall- Remove installed files"
 	@echo "  make clean    - Clean build artifacts"
 	@echo "  make dev      - Build debug binary"
