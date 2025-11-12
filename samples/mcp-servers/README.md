@@ -57,7 +57,7 @@ mcp:
   servers:
     - name: bash
       command: bun
-      args: ["samples/mcp-servers/bash-mcp/server.ts", "/Users/takafumi"]
+      args: ["samples/mcp-servers/bash-mcp/server.ts", "${HOME}"]
       description: Locked-down bash (ls, cat) MCP server
       auto_activate_keywords: [ls, list, dir, directory, cat, read, file]
       enabled: true

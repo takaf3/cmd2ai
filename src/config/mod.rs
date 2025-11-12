@@ -1,11 +1,50 @@
+mod api;
+mod defaults;
+mod reasoning;
+mod tools;
+mod validation;
+
 use crate::cli::Args;
 use crate::models::Reasoning;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+
+pub use api::ApiConfig;
+pub use reasoning::ReasoningConfig;
+pub use tools::{LocalToolConfig, LocalToolsConfig, TemplateValidation, ToolsConfig};
+pub use validation::{expand_env_var_in_string, expand_env_vars};
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SessionConfig {
+    #[serde(default)]
+    pub verbose: Option<bool>,
+}
+
+impl Default for SessionConfig {
+    fn default() -> Self {
+        Self { verbose: None }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ModelConfig {
+    #[serde(default)]
+    pub default_model: Option<String>,
+    #[serde(default)]
+    pub system_prompt: Option<String>,
+}
+
+impl Default for ModelConfig {
+    fn default() -> Self {
+        Self {
+            default_model: None,
+            system_prompt: None,
+        }
+    }
+}
 
 pub struct Config {
     pub api_key: String,
@@ -33,269 +72,6 @@ pub struct JsonConfig {
     pub tools: ToolsConfig,
     #[serde(default)]
     pub local_tools: LocalToolsConfig,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ApiConfig {
-    #[serde(default)]
-    pub endpoint: Option<String>,
-    #[serde(default)]
-    pub stream_timeout: Option<u64>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ModelConfig {
-    #[serde(default)]
-    pub default_model: Option<String>,
-    #[serde(default)]
-    pub system_prompt: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct SessionConfig {
-    #[serde(default)]
-    pub verbose: Option<bool>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ReasoningConfig {
-    #[serde(default)]
-    pub enabled: Option<bool>,
-    #[serde(default)]
-    pub effort: Option<String>,
-    #[serde(default)]
-    pub max_tokens: Option<u32>,
-    #[serde(default)]
-    pub exclude: Option<bool>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ToolsConfig {
-    #[serde(default = "default_tools_enabled")]
-    pub enabled: bool,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct LocalToolsConfig {
-    #[serde(default = "default_local_tools_enabled")]
-    pub enabled: bool,
-    #[serde(default)]
-    pub base_dir: Option<String>,
-    #[serde(default = "default_max_file_size_mb")]
-    pub max_file_size_mb: u64,
-    #[serde(default)]
-    pub tools: Vec<LocalToolConfig>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct LocalToolConfig {
-    pub name: String,
-    #[serde(default = "default_local_tools_enabled")]
-    pub enabled: bool,
-    #[serde(default)]
-    pub settings: serde_json::Value,
-
-    // Dynamic tool fields (optional - only for custom tools)
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub r#type: Option<String>, // "script" or "command"
-
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub input_schema: Option<serde_json::Value>,
-
-    // Script-specific fields
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub interpreter: Option<String>, // e.g., "python3", "node", "bash"
-
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub script: Option<String>, // Inline script content
-
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub script_path: Option<String>, // Path to script file (relative to base_dir)
-
-    // Command-specific fields
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub command: Option<String>,
-
-    #[serde(default)]
-    pub args: Vec<String>,
-
-    // Common optional settings
-    #[serde(default = "default_tool_timeout")]
-    pub timeout_secs: u64,
-
-    #[serde(default = "default_max_output_bytes")]
-    pub max_output_bytes: u64,
-
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub working_dir: Option<String>, // Relative to base_dir
-
-    #[serde(default)]
-    pub env: HashMap<String, String>, // Environment variables (with ${VAR} expansion)
-
-    // Command-specific: whether to send JSON arguments via stdin
-    // Defaults to true for backward compatibility
-    #[serde(default = "default_stdin_json")]
-    #[serde(skip_serializing_if = "is_default_stdin_json")]
-    pub stdin_json: bool,
-
-    // Security settings for command tools with templated arguments
-    #[serde(default = "default_restrict_to_base_dir")]
-    #[serde(skip_serializing_if = "is_default_restrict_to_base_dir")]
-    pub restrict_to_base_dir: bool,
-
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub insert_double_dash: Option<bool>, // None means auto-detect based on path placeholders
-
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub template_validations: Option<HashMap<String, TemplateValidation>>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct TemplateValidation {
-    #[serde(default = "default_validation_kind")]
-    pub kind: String, // "path" | "string" | "number"
-
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub allow_patterns: Option<Vec<String>>, // Regex patterns to allow
-
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub deny_patterns: Option<Vec<String>>, // Regex patterns to deny
-
-    #[serde(default = "default_allow_absolute")]
-    #[serde(skip_serializing_if = "is_default_allow_absolute")]
-    pub allow_absolute: bool, // Allow absolute paths (only for path kind)
-}
-
-impl Default for ApiConfig {
-    fn default() -> Self {
-        Self {
-            endpoint: None,
-            stream_timeout: None,
-        }
-    }
-}
-
-impl Default for ModelConfig {
-    fn default() -> Self {
-        Self {
-            default_model: None,
-            system_prompt: None,
-        }
-    }
-}
-
-impl Default for SessionConfig {
-    fn default() -> Self {
-        Self { verbose: None }
-    }
-}
-
-impl Default for ReasoningConfig {
-    fn default() -> Self {
-        Self {
-            enabled: None,
-            effort: None,
-            max_tokens: None,
-            exclude: None,
-        }
-    }
-}
-
-fn default_tools_enabled() -> bool {
-    true
-}
-fn default_local_tools_enabled() -> bool {
-    true
-}
-fn default_max_file_size_mb() -> u64 {
-    10
-}
-fn default_tool_timeout() -> u64 {
-    30
-}
-fn default_max_output_bytes() -> u64 {
-    1_048_576 // 1MB default
-}
-fn default_stdin_json() -> bool {
-    true // Default to true for backward compatibility
-}
-fn is_default_stdin_json(value: &bool) -> bool {
-    *value == default_stdin_json()
-}
-fn default_restrict_to_base_dir() -> bool {
-    true // Default to true for security
-}
-fn is_default_restrict_to_base_dir(value: &bool) -> bool {
-    *value == default_restrict_to_base_dir()
-}
-fn default_validation_kind() -> String {
-    "string".to_string()
-}
-fn default_allow_absolute() -> bool {
-    false // Default to false for security
-}
-fn is_default_allow_absolute(value: &bool) -> bool {
-    *value == default_allow_absolute()
-}
-
-/// Expand environment variables in a string using ${VAR_NAME} syntax
-pub fn expand_env_var_in_string(value: &str) -> String {
-    let mut result = value.to_string();
-    let re = regex::Regex::new(r"\$\{([^}]+)\}").unwrap();
-
-    for cap in re.captures_iter(value) {
-        let var_name = &cap[1];
-        let replacement = env::var(var_name).unwrap_or_else(|_| format!("${{{}}}", var_name));
-        result = result.replace(&cap[0], &replacement);
-    }
-
-    result
-}
-
-/// Expand environment variables in a HashMap
-pub fn expand_env_vars(env: &HashMap<String, String>) -> HashMap<String, String> {
-    let mut expanded = HashMap::new();
-
-    for (key, value) in env {
-        let expanded_value = expand_env_var_in_string(value);
-        expanded.insert(key.clone(), expanded_value);
-    }
-
-    expanded
-}
-
-impl Default for ToolsConfig {
-    fn default() -> Self {
-        Self {
-            enabled: default_tools_enabled(),
-        }
-    }
-}
-
-impl Default for LocalToolsConfig {
-    fn default() -> Self {
-        Self {
-            enabled: default_local_tools_enabled(),
-            base_dir: None,
-            max_file_size_mb: default_max_file_size_mb(),
-            tools: Vec::new(),
-        }
-    }
 }
 
 impl Config {
@@ -512,3 +288,4 @@ impl JsonConfig {
         paths
     }
 }
+

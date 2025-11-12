@@ -1,3 +1,4 @@
+pub mod builtins;
 mod dynamic;
 mod executor;
 pub mod paths;

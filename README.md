@@ -646,12 +646,12 @@ With verbose mode enabled, you'll see detailed debug output including:
 **Example verbose output:**
 
 ```
-[tools] Available tools: read_file, list_directory (base_dir=/Users/takafumi)
+[tools] Available tools: read_file, list_directory (base_dir=$HOME)
 [tools] Selected tool: 'list_directory' with args: {"path":"Documents"}
 [tools] Validating arguments for 'list_directory': {"path":"Documents"}
 [tools] Validation passed for 'list_directory'
 [tools] Calling tool 'list_directory' with args: {"path":"Documents"}
-[tools] run: ls -la "Documents" (cwd=/Users/takafumi, timeout=10s)
+[tools] run: ls -la "Documents" (cwd=$HOME, timeout=10s)
 [tools] done: exit_code=0, duration=0.05s, output_size=1234 bytes
 ```
 

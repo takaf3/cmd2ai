@@ -77,7 +77,7 @@ Use the `--mcp-server` flag:
 
 ```bash
 ./ai \
-  --mcp-server "bash:bun:samples/mcp-servers/bash-mcp/server.ts,/Users/takafumi" \
+  --mcp-server "bash:bun:samples/mcp-servers/bash-mcp/server.ts,$HOME" \
   "List files in my home directory and show the contents of .zshrc"
 ```
 
@@ -90,7 +90,7 @@ mcp:
   servers:
     - name: bash
       command: bun
-      args: ["samples/mcp-servers/bash-mcp/server.ts", "/Users/takafumi"]
+      args: ["samples/mcp-servers/bash-mcp/server.ts", "${HOME}"]
       description: Locked-down bash (ls, cat) MCP server
       auto_activate_keywords:
         - ls
@@ -112,7 +112,7 @@ mcp:
   servers:
     - name: bash
       command: bun
-      args: ["/absolute/path/to/cmd2ai/samples/mcp-servers/bash-mcp/server.ts", "/Users/takafumi"]
+      args: ["/absolute/path/to/cmd2ai/samples/mcp-servers/bash-mcp/server.ts", "${HOME}"]
       description: Locked-down bash (ls, cat) MCP server
       auto_activate_keywords: [ls, list, dir, directory, cat, read, file]
       enabled: true

@@ -7,8 +7,8 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 
+use super::builtins;
 use super::dynamic;
-use super::tools;
 
 #[derive(Debug, Clone)]
 pub struct LocalSettings {
@@ -46,19 +46,22 @@ impl LocalSettings {
     }
 }
 
+/// Type alias for tool handler functions
+pub type ToolHandler = Box<
+    dyn for<'a> Fn(
+            &'a Value,
+            &'a LocalSettings,
+        )
+            -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>>
+        + Send
+        + Sync,
+>;
+
 pub struct LocalTool {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
-    pub handler: Box<
-        dyn for<'a> Fn(
-                &'a Value,
-                &'a LocalSettings,
-            )
-                -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>>
-            + Send
-            + Sync,
-    >,
+    pub handler: ToolHandler,
 }
 
 pub struct LocalToolRegistry {
@@ -118,7 +121,7 @@ impl LocalToolRegistry {
                         let args = args.clone();
                         let settings = settings.clone();
                         Box::pin(async move {
-                            tools::handle_read_file(&args, &settings)
+                            builtins::handle_read_file(&args, &settings)
                         })
                     }),
                 },
