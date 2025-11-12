@@ -14,7 +14,7 @@ cmd2ai is a Rust CLI tool that pipes terminal commands to AI models via the Open
 cargo build --bin ai
 
 # Release build (optimized)
-cargo build --release
+cargo build --release --bin ai
 
 # Run directly with cargo
 cargo run --bin ai -- "your prompt here"
@@ -30,6 +30,15 @@ cargo run --bin ai -- --config-init
 
 # Debug streaming with raw SSE output (check-raw binary)
 cargo run --bin check-raw -- "your prompt" [--reasoning]
+
+# Run a specific test
+cargo test test_name
+
+# Run all tests
+cargo test
+
+# Run tests with output
+cargo test -- --nocapture
 ```
 
 ### Installation
@@ -46,11 +55,15 @@ make uninstall
 # Development build
 make dev
 
-# Run tests (currently no tests exist)
+# Run tests
 make test
 ```
 
-**ZSH Widget**: The installation includes `ai-widget.zsh` which intercepts commands starting with capital letters and routes them to the AI. Add to `~/.zshrc`: `source ~/.config/zsh/functions/ai-widget.zsh`
+**ZSH Widget**: The installation includes `ai-widget.zsh` which intercepts commands starting with capital letters and routes them to the AI. The widget:
+- Intercepts Enter key presses and checks if the command starts with a capital letter
+- Excludes environment variable assignments (e.g., `VAR=value command`)
+- Wraps the command in `ai "command"` and executes it
+- Install by adding to `~/.zshrc`: `source ~/.config/zsh/functions/ai-widget.zsh`
 
 ### Code Quality
 ```bash
@@ -74,6 +87,22 @@ make check
 The codebase contains two binary targets:
 - **`ai`** (`src/main.rs`): Main CLI application with full features
 - **`check-raw`** (`src/bin/check_raw.rs`): Debugging tool that displays raw SSE streams from the API
+
+The source is organized into several modules:
+- **`api/`**: API client, streaming response handling, and request/response models
+- **`cli.rs`**: Command-line argument parsing using clap
+- **`config/`**: Configuration management (YAML/JSON files, env vars, defaults)
+- **`error.rs`**: Centralized error types and handling
+- **`local_tools/`**: Local tool execution system with security sandboxing
+  - `builtins/`: Built-in tools (read_file, list_dir, etc.)
+  - `executor.rs`: Script and command execution with security validation
+  - `paths.rs`: Path validation and canonicalization utilities
+  - `dynamic.rs`: Dynamic tool creation from config
+  - `registry.rs`: Tool discovery and management
+- **`models/`**: Data structures for messages, sessions, tools, and reasoning
+- **`orchestrator.rs`**: Main execution flow orchestrating API calls and tool execution
+- **`session/`**: Session storage, filesystem operations, and conversation history
+- **`ui/`**: Output formatting, syntax highlighting, and terminal display
 
 ### High-Level Architecture
 
@@ -107,25 +136,42 @@ User Input → CLI Args → Config Loading → API Request → Stream Processing
 - Orchestrates streaming vs non-streaming API calls
 - Processes tool calls in a loop until completion
 
-**Config System (`src/config.rs`)**:
+**Orchestrator (`src/orchestrator.rs`)**:
+- Main execution flow coordinating all components
+- Manages the request-response cycle with tool call iterations
+- Decides between streaming and non-streaming modes based on tool availability
+- Collects and formats tools from registry for LLM consumption
+
+**Config System (`src/config/mod.rs`)**:
 - `Config`: Runtime configuration from env vars and CLI args
 - `LocalToolsConfig`: Local tool definitions loaded from YAML/JSON files
 - Supports regex patterns for environment variable expansion (`${VAR_NAME}`)
 - API endpoint normalization (auto-appends `/chat/completions`)
+- Hierarchical config resolution: CLI args > Env vars > Local config > Global config > Defaults
+
+**API Module (`src/api/`)**:
+- `client.rs`: HTTP client for making API requests
+- `streaming.rs`: Server-Sent Events (SSE) stream processing
+- `response.rs`: Response parsing, tool call extraction, and content extraction
+- `models.rs`: API request/response data structures
 
 **Local Tools (`src/local_tools/`)**:
 - `registry.rs`: Manages tool registration and discovery
 - `tools.rs`: Formats tools for LLM and executes tool calls
-- `executor.rs`: Executes custom script and command-based tools
+- `executor.rs`: Executes custom script and command-based tools with security validation
 - `dynamic.rs`: Creates dynamic tools from configuration
 - `paths.rs`: Safe path resolution utilities (prevents path traversal attacks)
+- `builtins/`: Built-in tools like read_file with sandboxing
 
-**Streaming Handler (`src/highlight.rs`)**:
-- `CodeBuffer`: Stateful processor for detecting and highlighting code blocks during streaming
+**UI Module (`src/ui/`)**:
+- `highlight.rs`: `CodeBuffer` - Stateful processor for detecting and highlighting code blocks during streaming
+- `output.rs`: Display functions for content, reasoning, tool results, and errors
 - Handles partial code blocks across SSE chunks
 - Applies syntax highlighting in real-time using syntect
 
-**Session Management (`src/session.rs`)**:
+**Session Management (`src/session/`)**:
+- `storage.rs`: Session data structures and serialization
+- `filesystem.rs`: File-based session persistence
 - Maintains conversation history in `~/.cache/cmd2ai/`
 - Auto-continues conversations within 30-minute window
 - Keeps last 3 exchanges (6 messages) to stay within token limits
@@ -174,6 +220,8 @@ Configuration can be set via YAML/JSON config files, environment variables, or c
 1. `.cmd2ai.yaml` or `.cmd2ai.yml` (local project config)
 2. `~/.config/cmd2ai/cmd2ai.yaml` or `.cmd2ai.yml` (global user config)
 3. `.cmd2ai.json` (backward compatibility)
+
+**Note**: Run `ai --config-init` to create a `.cmd2ai.yaml` file with examples copied from `config.example.yaml`.
 
 #### Complete Configuration Structure
 ```yaml
@@ -257,6 +305,35 @@ The migration script will:
 - Preserve existing local tool configurations when using --merge
 - Keep sensitive data (API keys) as environment variables
 
+### Key Dependencies
+
+The project uses these main crates:
+- **tokio**: Async runtime for non-blocking I/O and concurrent execution
+- **reqwest**: HTTP client with streaming support for SSE responses
+- **serde/serde_json/serde_yaml**: (De)serialization for config files and API messages
+- **clap**: Command-line argument parsing with derive macros
+- **syntect**: Real-time syntax highlighting for code blocks in output
+- **colored**: Terminal color formatting for UI elements
+- **jsonschema**: JSON Schema validation for tool input parameters
+- **anyhow**: Simplified error handling with context
+- **regex**: Pattern matching for env var expansion and template validation
+- **chrono**: Timestamp handling for session expiration
+- **uuid**: Unique session identifiers
+- **dirs**: Cross-platform path resolution (config, cache directories)
+
+### Testing
+
+The project includes unit tests in the `tests/` directory covering:
+- **Path validation and security** (`tests/local_tools_template.rs`): Tests for path traversal prevention, option injection blocking, and template argument validation
+- **API response parsing** (`tests/api_response.rs`): Tests for parsing streaming responses and tool calls
+- **Session storage** (`tests/session_store.rs`): Tests for session persistence and history management
+- **Tool execution** (`tests/tools.rs`): Tests for local tool execution and error handling
+
+Key testing utilities:
+- Uses `tempfile` crate for creating temporary directories in tests
+- Tests validate security features like path canonicalization and base directory restrictions
+- Integration tests cover the full tool execution flow from config to execution
+
 ### Common Debugging
 
 ```bash
@@ -268,4 +345,7 @@ AI_VERBOSE=true ai "test" 2>&1 | grep "Available tools"
 
 # Use custom API endpoint
 ai --api-endpoint "http://localhost:11434/v1" "Hello world"
+
+# See detailed tool execution logs
+AI_VERBOSE=true ai "Read the file test.txt"
 ```

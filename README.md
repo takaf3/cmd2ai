@@ -68,8 +68,15 @@ cd cmd2ai
 
 2. Build the project:
 ```bash
-cargo build --release
+cargo build --release --bin ai
 ```
+
+The binary will be located at `./target/release/ai`. You can run it directly:
+```bash
+./target/release/ai "your prompt here"
+```
+
+Or add it to your PATH for easier access.
 
 3. Set your OpenRouter API key:
 ```bash
@@ -80,7 +87,12 @@ export OPENROUTER_API_KEY="your-api-key-here"
 
 Basic usage:
 ```bash
-./ai "your prompt here"
+ai "your prompt here"
+```
+
+For development (without installing):
+```bash
+cargo run --bin ai -- "your prompt here"
 ```
 
 ### Conversation Memory
@@ -88,33 +100,33 @@ Basic usage:
 The tool automatically maintains conversation context for follow-up questions:
 
 ```bash
-./ai "What is the capital of France?"
+ai "What is the capital of France?"
 # Output: The capital of France is Paris.
 
-./ai "Tell me more about it"
+ai "Tell me more about it"
 # The AI remembers the previous context and provides details about Paris
 ```
 
 Start a new conversation:
 ```bash
-./ai --new "Different topic here"
+ai --new "Different topic here"
 ```
 
 Continue an expired conversation:
 ```bash
-./ai --continue "Follow up on our last discussion"
+ai --continue "Follow up on our last discussion"
 ```
 
 Clear all conversation history:
 ```bash
-./ai --clear
+ai --clear
 ```
 
 ### Tools
 
 Disable tools for a specific query:
 ```bash
-./ai --no-tools "What is 2+2?"
+ai --no-tools "What is 2+2?"
 ```
 
 ### Configuration
@@ -125,7 +137,7 @@ cmd2ai supports comprehensive configuration through YAML files with environment 
 
 1. Initialize a config file with examples:
 ```bash
-./ai --config-init
+ai --config-init
 ```
 
 2. Migrate existing environment variables to YAML config:
@@ -231,27 +243,27 @@ For models that support it, you can enable reasoning tokens to see the AI's step
 
 Enable reasoning with default parameters:
 ```bash
-./ai --reasoning-enabled "How would you build the world's tallest skyscraper?"
+ai --reasoning-enabled "How would you build the world's tallest skyscraper?"
 ```
 
 Set specific reasoning effort level:
 ```bash
-./ai --reasoning-effort high "Explain quantum computing in detail"
+ai --reasoning-effort high "Explain quantum computing in detail"
 ```
 
 Set maximum tokens for reasoning:
 ```bash
-./ai --reasoning-max-tokens 2000 "What's the most efficient sorting algorithm?"
+ai --reasoning-max-tokens 2000 "What's the most efficient sorting algorithm?"
 ```
 
 Use reasoning internally but exclude from output:
 ```bash
-./ai --reasoning-effort medium --reasoning-exclude "Solve this complex problem"
+ai --reasoning-effort medium --reasoning-exclude "Solve this complex problem"
 ```
 
 Combine multiple reasoning options:
 ```bash
-./ai --reasoning-effort high --reasoning-max-tokens 3000 "Design a distributed system"
+ai --reasoning-effort high --reasoning-max-tokens 3000 "Design a distributed system"
 ```
 
 #### Using Environment Variables
@@ -318,20 +330,20 @@ You can use cmd2ai with any OpenAI-compatible API endpoint (including local LLMs
 Using command-line argument:
 ```bash
 # Use a local LLM server (Ollama)
-./ai --api-endpoint "http://localhost:11434/v1" "Hello world"
+ai --api-endpoint "http://localhost:11434/v1" "Hello world"
 
 # Use OpenAI directly
-./ai --api-endpoint "https://api.openai.com/v1" "Explain quantum computing"
+ai --api-endpoint "https://api.openai.com/v1" "Explain quantum computing"
 
 # Use a local AI server
-./ai --api-endpoint "http://localhost:8080/v1" "What is the weather?"
+ai --api-endpoint "http://localhost:8080/v1" "What is the weather?"
 ```
 
 Using environment variable:
 ```bash
 # Set custom endpoint for all commands
 export AI_API_ENDPOINT="http://localhost:11434/v1"
-./ai "What is the weather today?"
+ai "What is the weather today?"
 ```
 
 The endpoint URL is automatically normalized:
@@ -618,6 +630,15 @@ local_tools:
   enabled: false
 ```
 
+### Debug Streaming Responses
+
+To debug raw Server-Sent Events (SSE) streams from the API:
+
+```bash
+# Debug streaming with raw SSE output
+cargo run --bin check-raw -- "your prompt" [--reasoning]
+```
+
 ### Debugging Local Tools
 
 When troubleshooting tool execution issues, enable verbose logging to see detailed information about tool calls:
@@ -685,6 +706,30 @@ This Rust implementation uses:
 ## Development
 
 See [CLAUDE.md](CLAUDE.md) for detailed development documentation.
+
+### Quick Development Commands
+
+```bash
+# Build debug binary
+cargo build --bin ai
+
+# Run directly with cargo
+cargo run --bin ai -- "your prompt here"
+
+# Run tests
+cargo test
+
+# Run tests with output
+cargo test -- --nocapture
+
+# Format code
+cargo fmt
+
+# Run linter
+cargo clippy
+```
+
+For more details on architecture, testing, and debugging, see [CLAUDE.md](CLAUDE.md).
 
 ## Changelog
 
