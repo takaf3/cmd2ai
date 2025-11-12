@@ -7,6 +7,10 @@ PREFIX ?= $(HOME)/.local
 BINDIR = $(PREFIX)/bin
 ZSHDIR = $(HOME)/.config/zsh/functions
 
+# Optional components
+WITH_WEBSEARCH ?= 0
+INSTALL_ZSHRC ?= 0
+
 # Binary name
 BINARY = ai
 
@@ -29,6 +33,39 @@ install: build
 	@echo "Installing ZSH widget to $(ZSHDIR)..."
 	@mkdir -p $(ZSHDIR)
 	@cp ai-widget.zsh $(ZSHDIR)/
+	@if [ "$(WITH_WEBSEARCH)" = "1" ] || [ "$(WITH_WEBSEARCH)" = "yes" ]; then \
+		echo "Installing websearch zsh function (ask) to $(ZSHDIR)..."; \
+		cp ask-websearch.zsh $(ZSHDIR)/; \
+		if [ "$(INSTALL_ZSHRC)" = "1" ] || [ "$(INSTALL_ZSHRC)" = "yes" ]; then \
+			echo "Updating ~/.zshrc with websearch source line (idempotent)..."; \
+			if [ -f "$(HOME)/.zshrc" ]; then \
+				if ! grep -q "# cmd2ai websearch (BEGIN)" "$(HOME)/.zshrc"; then \
+					{ \
+						echo ""; \
+						echo "# cmd2ai websearch (BEGIN)"; \
+						echo "if [ -f \"$(ZSHDIR)/ask-websearch.zsh\" ]; then"; \
+						echo "  source \"$(ZSHDIR)/ask-websearch.zsh\""; \
+						echo "fi"; \
+						echo "# cmd2ai websearch (END)"; \
+					} >> "$(HOME)/.zshrc"; \
+				fi; \
+			else \
+				{ \
+					echo "# Created by cmd2ai installer"; \
+					echo "# cmd2ai websearch (BEGIN)"; \
+					echo "if [ -f \"$(ZSHDIR)/ask-websearch.zsh\" ]; then"; \
+					echo "  source \"$(ZSHDIR)/ask-websearch.zsh\""; \
+					echo "fi"; \
+					echo "# cmd2ai websearch (END)"; \
+				} > "$(HOME)/.zshrc"; \
+			fi; \
+		else \
+			echo ""; \
+			echo "Websearch function installed. Add this to your ~/.zshrc:"; \
+			echo "  source $(ZSHDIR)/ask-websearch.zsh"; \
+			echo ""; \
+		fi; \
+	fi
 	@echo ""
 	@echo "Installation complete!"
 	@echo ""
@@ -39,6 +76,11 @@ install: build
 	@echo "  source $(ZSHDIR)/ai-widget.zsh"
 	@echo ""
 
+# Install including websearch function
+.PHONY: install-websearch
+install-websearch: WITH_WEBSEARCH=1
+install-websearch: install
+
 # Uninstall
 .PHONY: uninstall
 uninstall:
@@ -46,6 +88,12 @@ uninstall:
 	@rm -f $(BINDIR)/$(BINARY)
 	@echo "Removing ZSH widget..."
 	@rm -f $(ZSHDIR)/ai-widget.zsh
+	@echo "Removing websearch zsh function (if present)..."
+	@rm -f $(ZSHDIR)/ask-websearch.zsh
+	@echo "Cleaning ~/.zshrc snippet (if present)..."
+	@if [ -f "$(HOME)/.zshrc" ] && grep -q "# cmd2ai websearch (BEGIN)" "$(HOME)/.zshrc"; then \
+		awk 'BEGIN{skip=0} /# cmd2ai websearch \\(BEGIN\\)/{skip=1; next} /# cmd2ai websearch \\(END\\)/{skip=0; next} !skip{print}' "$(HOME)/.zshrc" > "$(HOME)/.zshrc.tmp" && mv "$(HOME)/.zshrc.tmp" "$(HOME)/.zshrc"; \
+	fi
 	@echo "Uninstall complete!"
 
 # Clean build artifacts
@@ -84,6 +132,9 @@ help:
 	@echo "Available targets:"
 	@echo "  make          - Build release binary (default)"
 	@echo "  make install  - Build and install binary and ZSH widget"
+	@echo "                  Add WITH_WEBSEARCH=1 to also install 'ask' websearch function"
+	@echo "                  Add INSTALL_ZSHRC=1 to auto-add source line to ~/.zshrc"
+	@echo "  make install-websearch - Install with websearch function enabled (same as WITH_WEBSEARCH=1)"
 	@echo "  make uninstall- Remove installed files"
 	@echo "  make clean    - Clean build artifacts"
 	@echo "  make dev      - Build debug binary"

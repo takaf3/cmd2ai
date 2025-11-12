@@ -1,6 +1,5 @@
 # Rust build artifacts
 /target/
-Cargo.lock
 
 # IDE and editor files
 .vscode/
@@ -40,6 +39,9 @@ secrets/
 tarpaulin-report.html
 cobertura.xml
 coverage/
+
+# Node.js dependencies
+node_modules/
 
 # Build outputs
 /ai
