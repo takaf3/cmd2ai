@@ -64,12 +64,7 @@ impl CodeBuffer {
         // Account for "└─" prefix (2 chars) to mirror the header
         let dash_count = width.saturating_sub(2);
         let dashes = "─".repeat(dash_count.max(1));
-        format!(
-            "\n{}{}{}", 
-            ANSI_RESET, 
-            "└─".dimmed(), 
-            dashes.dimmed()
-        )
+        format!("\n{}{}{}", ANSI_RESET, "└─".dimmed(), dashes.dimmed())
     }
 
     fn find_code_block_end(&self, text: &str) -> Option<usize> {

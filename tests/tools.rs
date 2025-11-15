@@ -37,7 +37,9 @@ fn test_read_file_missing_path() {
 
     let result = handle_read_file(&args, &settings);
     assert!(result.is_err());
-    assert!(result.unwrap_err().contains("Missing required argument: path"));
+    assert!(result
+        .unwrap_err()
+        .contains("Missing required argument: path"));
 }
 
 #[test]
@@ -98,4 +100,3 @@ fn test_read_file_path_traversal_prevention() {
     assert!(result.is_err());
     // Should fail due to path traversal prevention
 }
-

@@ -126,4 +126,3 @@ fn test_extract_reasoning_without_reasoning() {
     let reasoning = extract_reasoning(&response).unwrap();
     assert_eq!(reasoning, None);
 }
-

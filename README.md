@@ -129,6 +129,41 @@ Disable tools for a specific query:
 ai --no-tools "What is 2+2?"
 ```
 
+#### Code Execution Mode
+
+cmd2ai uses **code execution mode** by default when local tools are available. Instead of passing all tool definitions to the model, cmd2ai generates TypeScript wrappers and asks the model to write code that orchestrates multiple tools efficiently. This approach:
+
+- **Reduces token usage**: Only loads tool definitions on-demand
+- **Enables complex workflows**: Models can write loops, conditionals, and error handling
+- **Improves efficiency**: Large data can be processed in code before returning results
+
+**Requirements:**
+- [bun](https://bun.sh) must be installed and available in your PATH
+
+**Disable code mode** (use classic direct tool calls):
+```bash
+ai --no-code-mode "Read file.txt"
+```
+
+Or via config:
+```yaml
+code_mode:
+  enabled: false
+```
+
+**Environment variables:**
+- `AI_CODE_MODE_ENABLED` - Enable/disable code mode ("true"/"false")
+- `AI_CODE_MODE_BUN_PATH` - Custom path to bun executable
+- `AI_CODE_MODE_WORKSPACE_DIR` - Custom workspace directory
+- `AI_CODE_MODE_TIMEOUT` - Execution timeout in seconds (default: 60)
+- `AI_CODE_MODE_MAX_OUTPUT_BYTES` - Max output size in bytes (default: 10MB)
+
+Following Anthropic’s “progressive disclosure” recommendation, cmd2ai now inspects each prompt
+and only enables the TypeScript workspace when you hint at file/directory/data workflows or multi-step
+tool orchestration. Lightweight greetings or simple Q&A stay on the classic direct tool path, keeping
+latency and token usage low. Use `--no-code-mode` (or the config/env switches) any time you want to
+stick with classic tool calling.
+
 ### Configuration
 
 cmd2ai supports comprehensive configuration through YAML files with environment variable overrides for debugging. YAML format allows inline comments for better documentation.

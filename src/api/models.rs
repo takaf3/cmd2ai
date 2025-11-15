@@ -45,4 +45,3 @@ pub struct Choice {
 pub struct StreamResponse {
     pub choices: Option<Vec<Choice>>,
 }
-

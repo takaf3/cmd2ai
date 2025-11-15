@@ -3,9 +3,9 @@ use std::collections::HashMap;
 
 use crate::config::defaults::{
     default_allow_absolute, default_local_tools_enabled, default_max_file_size_mb,
-    default_max_output_bytes, default_restrict_to_base_dir, default_tool_timeout,
-    default_tools_enabled, default_validation_kind, is_default_allow_absolute,
-    is_default_restrict_to_base_dir, is_default_stdin_json, default_stdin_json,
+    default_max_output_bytes, default_restrict_to_base_dir, default_stdin_json,
+    default_tool_timeout, default_tools_enabled, default_validation_kind,
+    is_default_allow_absolute, is_default_restrict_to_base_dir, is_default_stdin_json,
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -138,4 +138,3 @@ pub struct TemplateValidation {
     #[serde(skip_serializing_if = "is_default_allow_absolute")]
     pub allow_absolute: bool, // Allow absolute paths (only for path kind)
 }
-

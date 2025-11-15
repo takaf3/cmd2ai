@@ -17,4 +17,3 @@ pub struct Session {
     pub last_updated: chrono::DateTime<chrono::Local>,
     pub messages: Vec<Message>,
 }
-

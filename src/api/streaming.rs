@@ -93,7 +93,11 @@ pub async fn process_streaming_response(
                             if reasoning_displayed && !reasoning_exclude {
                                 // Close reasoning block with CodeBuffer
                                 // Avoid double newline if reasoning_buffer already ends with one
-                                let sep = if reasoning_buffer.ends_with('\n') { "" } else { "\n" };
+                                let sep = if reasoning_buffer.ends_with('\n') {
+                                    ""
+                                } else {
+                                    "\n"
+                                };
                                 let reasoning_end = format!("{}\n```", sep);
                                 let formatted = reasoning_code_buffer.append(&reasoning_end);
                                 if !formatted.is_empty() {
@@ -148,8 +152,8 @@ pub async fn process_streaming_response(
                                                         // Start reasoning block with CodeBuffer
                                                         println!();
                                                         let reasoning_start = "```REASONING\n";
-                                                        let formatted =
-                                                            reasoning_code_buffer.append(reasoning_start);
+                                                        let formatted = reasoning_code_buffer
+                                                            .append(reasoning_start);
                                                         if !formatted.is_empty() {
                                                             print!("{}", formatted);
                                                         }
@@ -164,8 +168,8 @@ pub async fn process_streaming_response(
 
                                                     if !display_reasoning.is_empty() {
                                                         // Append reasoning content to CodeBuffer
-                                                        let formatted =
-                                                            reasoning_code_buffer.append(&display_reasoning);
+                                                        let formatted = reasoning_code_buffer
+                                                            .append(&display_reasoning);
                                                         if !formatted.is_empty() {
                                                             print!("{}", formatted);
                                                         }
@@ -188,11 +192,14 @@ pub async fn process_streaming_response(
                                                 {
                                                     // Close reasoning block with CodeBuffer
                                                     // Avoid double newline if reasoning_buffer already ends with one
-                                                    let sep =
-                                                        if reasoning_buffer.ends_with('\n') { "" } else { "\n" };
+                                                    let sep = if reasoning_buffer.ends_with('\n') {
+                                                        ""
+                                                    } else {
+                                                        "\n"
+                                                    };
                                                     let reasoning_end = format!("{}\n```", sep);
-                                                    let formatted =
-                                                        reasoning_code_buffer.append(&reasoning_end);
+                                                    let formatted = reasoning_code_buffer
+                                                        .append(&reasoning_end);
                                                     if !formatted.is_empty() {
                                                         print!("{}", formatted);
                                                     }
@@ -221,8 +228,11 @@ pub async fn process_streaming_response(
                                             // Process annotations
                                             if let Some(annotations) = delta.annotations {
                                                 for annotation in annotations {
-                                                    if annotation.annotation_type == "url_citation" {
-                                                        if let Some(citation) = annotation.url_citation {
+                                                    if annotation.annotation_type == "url_citation"
+                                                    {
+                                                        if let Some(citation) =
+                                                            annotation.url_citation
+                                                        {
                                                             if !citations
                                                                 .iter()
                                                                 .any(|c| c.url == citation.url)
@@ -266,7 +276,11 @@ pub async fn process_streaming_response(
     if reasoning_displayed && !reasoning_exclude {
         // Close reasoning block with CodeBuffer
         // Avoid double newline if reasoning_buffer already ends with one
-        let sep = if reasoning_buffer.ends_with('\n') { "" } else { "\n" };
+        let sep = if reasoning_buffer.ends_with('\n') {
+            ""
+        } else {
+            "\n"
+        };
         let reasoning_end = format!("{}\n```", sep);
         let formatted = reasoning_code_buffer.append(&reasoning_end);
         if !formatted.is_empty() {
@@ -299,4 +313,3 @@ pub async fn process_streaming_response(
         content: assistant_response,
     })
 }
-

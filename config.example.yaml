@@ -183,3 +183,22 @@ reasoning:
   
   # Use reasoning internally but exclude from output
   exclude: false
+
+# Code Execution Mode Configuration
+# Code mode uses TypeScript/bun to execute tool orchestration code
+code_mode:
+  # Enable code execution mode (default: true)
+  # When enabled, models write TypeScript code instead of making direct tool calls
+  enabled: true
+  
+  # Workspace directory for generated code (default: ~/.cache/cmd2ai/code_mode/)
+  # workspace_dir: ~/.cache/cmd2ai/code_mode
+  
+  # Path to bun executable (default: found in PATH)
+  # bun_path: /usr/local/bin/bun
+  
+  # Execution timeout in seconds (default: 60)
+  # timeout_secs: 60
+  
+  # Maximum output size in bytes (default: 10485760 = 10MB)
+  # max_output_bytes: 10485760

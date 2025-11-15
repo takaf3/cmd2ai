@@ -50,4 +50,3 @@ pub fn stringify_path(p: &Path) -> Result<String, String> {
         .ok_or_else(|| format!("Path contains invalid UTF-8: {}", p.display()))
         .map(|s| s.to_string())
 }
-

@@ -94,4 +94,3 @@ impl From<&str> for Cmd2AiError {
 }
 
 pub type Result<T> = std::result::Result<T, Cmd2AiError>;
-

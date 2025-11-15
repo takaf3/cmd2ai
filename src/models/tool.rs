@@ -13,4 +13,3 @@ pub struct FunctionCall {
     pub name: String,
     pub arguments: String,
 }
-

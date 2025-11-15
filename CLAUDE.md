@@ -91,6 +91,10 @@ The codebase contains two binary targets:
 The source is organized into several modules:
 - **`api/`**: API client, streaming response handling, and request/response models
 - **`cli.rs`**: Command-line argument parsing using clap
+- **`code_exec/`**: Code execution mode for TypeScript/bun-based tool orchestration
+  - `executor.rs`: Bun process execution with timeouts and output limits
+  - `generator.rs`: TypeScript wrapper and client generation
+  - `mod.rs`: Workspace management and bun path resolution
 - **`config/`**: Configuration management (YAML/JSON files, env vars, defaults)
 - **`error.rs`**: Centralized error types and handling
 - **`local_tools/`**: Local tool execution system with security sandboxing
@@ -139,11 +143,14 @@ User Input → CLI Args → Config Loading → API Request → Stream Processing
 **Orchestrator (`src/orchestrator.rs`)**:
 - Main execution flow coordinating all components
 - Manages the request-response cycle with tool call iterations
-- Decides between streaming and non-streaming modes based on tool availability
-- Collects and formats tools from registry for LLM consumption
+- Decides between code execution mode and classic direct tool calling
+- Uses a lightweight heuristic (keywords + prompt length) to follow Anthropic’s progressive-disclosure guidance: small talk stays classic, file/data workflows flip to code mode
+- Code mode: generates TS wrappers, requests TypeScript from the model, executes via bun
+- Classic mode: falls back to direct tool calling with streaming/non-streaming logic
 
 **Config System (`src/config/mod.rs`)**:
 - `Config`: Runtime configuration from env vars and CLI args
+- `CodeModeConfig`: Settings for code execution mode (enabled, workspace dir, bun path, limits)
 - `LocalToolsConfig`: Local tool definitions loaded from YAML/JSON files
 - Supports regex patterns for environment variable expansion (`${VAR_NAME}`)
 - API endpoint normalization (auto-appends `/chat/completions`)
@@ -198,12 +205,25 @@ User Input → CLI Args → Config Loading → API Request → Stream Processing
 - See `src/local_tools/executor.rs::template_args()` for implementation details
 
 **Tool Call Processing**:
-When tools are available, the main loop in `main.rs`:
+When tools are available, cmd2ai uses one of two modes:
+
+**Code Execution Mode (default when `code_mode.enabled = true`)**
+1. Creates a workspace directory under `~/.cache/cmd2ai/code_mode/<session>`
+2. Generates TypeScript wrappers (`servers/local/*.ts`) plus a `client.ts`
+3. Sends a system message describing the filesystem API; no direct tools are sent
+4. Requests TypeScript code from the model (non-streaming request, streaming response)
+5. Extracts the returned TypeScript from fenced code blocks
+6. Executes the code via bun using `CodeExecutor`
+7. Displays the program's stdout and falls back to classic tool calling on errors
+
+Heuristic gating (inspired by Anthropic’s “progressive disclosure”) keeps this mode reserved for prompts that mention files, directories, analysis, or other multi-step tool workflows; everything else remains in classic mode to minimize latency and token use.
+
+**Classic Direct Tool Calling Mode**
 1. Sends non-streaming request with tool definitions
 2. Parses response for tool calls
-3. Executes each tool via local tool registry
-4. Sends results back to AI
-5. Repeats until no more tool calls
+3. Executes each tool via the local tool registry
+4. Sends tool results back to the model
+5. Repeats until no more tool calls, then streams the final answer
 
 **Session Files**:
 - Location: `~/.cache/cmd2ai/session-*.json`
@@ -259,6 +279,14 @@ local_tools:
       enabled: true
     - name: read_file
       enabled: true
+
+# Code Execution Mode Configuration
+code_mode:
+  enabled: true                          # Enable code execution mode (default: true)
+  workspace_dir: ~/.cache/cmd2ai/code_mode  # Workspace directory (optional)
+  bun_path: /usr/local/bin/bun           # Path to bun (optional)
+  timeout_secs: 60                       # Execution timeout in seconds
+  max_output_bytes: 10485760            # Max stdout/stderr bytes collected
 ```
 
 #### Environment Variable Overrides
@@ -277,6 +305,11 @@ Optional (override JSON config):
 - `AI_REASONING_MAX_TOKENS` - Max reasoning tokens
 - `AI_REASONING_EXCLUDE` - Hide reasoning output
 - `AI_TOOLS_ENABLED` - Enable/disable all tools
+- `AI_CODE_MODE_ENABLED` - Enable/disable code execution mode ("true"/"false")
+- `AI_CODE_MODE_BUN_PATH` - Custom path to bun executable
+- `AI_CODE_MODE_WORKSPACE_DIR` - Custom workspace directory for code execution
+- `AI_CODE_MODE_TIMEOUT` - Code execution timeout in seconds
+- `AI_CODE_MODE_MAX_OUTPUT_BYTES` - Maximum output size in bytes
 
 ### Configuration Migration
 

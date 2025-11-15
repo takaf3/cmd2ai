@@ -51,8 +51,7 @@ pub type ToolHandler = Box<
     dyn for<'a> Fn(
             &'a Value,
             &'a LocalSettings,
-        )
-            -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>>
+        ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>>
         + Send
         + Sync,
 >;
@@ -99,7 +98,10 @@ impl LocalToolRegistry {
         // read_file tool
         if is_enabled("read_file") {
             if self.settings.verbose {
-                eprintln!("{}", "[tools] Registering built-in tool: read_file".dimmed());
+                eprintln!(
+                    "{}",
+                    "[tools] Registering built-in tool: read_file".dimmed()
+                );
             }
             self.tools.insert(
                 "read_file".to_string(),
@@ -127,7 +129,6 @@ impl LocalToolRegistry {
                 },
             );
         }
-
     }
 
     fn register_dynamic_tools(&mut self, config: &LocalToolsConfig) {
@@ -205,8 +206,8 @@ impl LocalToolRegistry {
             .ok_or_else(|| format!("Tool '{}' not found", tool_name))?;
 
         if self.settings.verbose {
-            let args_str = serde_json::to_string(arguments)
-                .unwrap_or_else(|_| "<invalid json>".to_string());
+            let args_str =
+                serde_json::to_string(arguments).unwrap_or_else(|_| "<invalid json>".to_string());
             let truncated = if args_str.len() > 200 {
                 format!("{}...", &args_str[..200])
             } else {
@@ -214,8 +215,11 @@ impl LocalToolRegistry {
             };
             eprintln!(
                 "{}",
-                format!("[tools] Validating arguments for '{}': {}", tool_name, truncated)
-                    .dimmed()
+                format!(
+                    "[tools] Validating arguments for '{}': {}",
+                    tool_name, truncated
+                )
+                .dimmed()
             );
         }
 
@@ -234,8 +238,11 @@ impl LocalToolRegistry {
             if self.settings.verbose {
                 eprintln!(
                     "{}",
-                    format!("[tools] Validation failed for '{}': {}", tool_name, error_msg)
-                        .dimmed()
+                    format!(
+                        "[tools] Validation failed for '{}': {}",
+                        tool_name, error_msg
+                    )
+                    .dimmed()
                 );
             }
             return Err(error_msg);

@@ -26,4 +26,3 @@ pub fn expand_env_vars(env: &HashMap<String, String>) -> HashMap<String, String>
 
     expanded
 }
-

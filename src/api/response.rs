@@ -63,4 +63,3 @@ pub fn extract_reasoning(response_json: &Value) -> Result<Option<String>> {
         .and_then(|r| r.as_str())
         .map(|s| s.to_string()))
 }
-

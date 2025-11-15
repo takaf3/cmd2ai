@@ -1,12 +1,17 @@
-use crate::api::{make_api_request, process_streaming_response, RequestBody};
 use crate::api::response::{extract_content, extract_reasoning, parse_tool_calls};
+use crate::api::{make_api_request, process_streaming_response, RequestBody};
 use crate::cli::Args;
+use crate::code_exec::{
+    create_workspace, generate_typescript_files, resolve_bun_path, CodeExecutor,
+};
 use crate::config::Config;
 use crate::error::{Cmd2AiError, Result};
 use crate::local_tools::{call_local_tool, format_tools_for_llm, LocalToolRegistry};
 use crate::models::Message;
+use crate::session::create_new_session;
 use crate::ui::{display_content, display_reasoning, display_tool_error, display_tool_result};
 use colored::*;
+use regex::Regex;
 use serde_json::Value;
 
 pub struct OrchestratorContext {
@@ -16,22 +21,100 @@ pub struct OrchestratorContext {
 }
 
 pub async fn run(context: OrchestratorContext, messages: &mut Vec<Message>) -> Result<String> {
-    let final_model = context.config.model.clone();
-
-    // Get available tools unless explicitly disabled
-    let _local_tools_enabled = context.config.tools_enabled
+    let local_tools_enabled = context.config.tools_enabled
         && context.config.local_tools_config.enabled
         && !context.args.no_tools;
 
-    // Collect tools from local tools
+    let use_code_mode = local_tools_enabled && should_use_code_mode(&context, messages);
+
+    if use_code_mode {
+        run_code_mode(context, messages).await
+    } else {
+        run_classic_tool_calling(context, messages).await
+    }
+}
+
+/// Decide whether to enable code execution mode for the current turn.
+/// Inspired by Anthropic’s “progressive disclosure” guidance, we avoid paying the overhead
+/// unless the user explicitly hints they need tool orchestration (file reads, analysis, etc.).
+fn should_use_code_mode(context: &OrchestratorContext, messages: &[Message]) -> bool {
+    if !context.config.code_mode.enabled {
+        return false;
+    }
+
+    let registry_has_tools = context
+        .local_tools_registry
+        .as_ref()
+        .map_or(false, |registry| !registry.list().is_empty());
+    if !registry_has_tools {
+        return false;
+    }
+
+    let last_user = messages
+        .iter()
+        .rev()
+        .find(|m| m.role == "user")
+        .and_then(|m| m.content.as_ref())
+        .map(|s| s.to_lowercase());
+
+    let Some(content) = last_user else {
+        return false;
+    };
+
+    let keyword_hits = [
+        "read",
+        "write",
+        "file",
+        "files",
+        "directory",
+        "directories",
+        "list",
+        "ls",
+        "search",
+        "analyze",
+        "analysis",
+        "summarize",
+        "report",
+        "csv",
+        "json",
+        "log",
+        "logs",
+        "tool",
+        "script",
+        "code",
+        "typescript",
+        "ts",
+        "workspace",
+        "data",
+        "table",
+    ]
+    .iter()
+    .any(|keyword| content.contains(keyword));
+
+    let mentions_tools_explicitly = content.contains("use tool")
+        || content.contains("run tool")
+        || content.contains("call tool");
+    let mentions_code_explicitly = content.contains("write code")
+        || content.contains("typescript")
+        || content.contains("ts code");
+    let token_count = content.split_whitespace().count();
+
+    keyword_hits || mentions_tools_explicitly || mentions_code_explicitly || token_count > 25
+}
+
+async fn run_classic_tool_calling(
+    context: OrchestratorContext,
+    messages: &mut Vec<Message>,
+) -> Result<String> {
+    let final_model = context.config.model.clone();
     let mut all_tools = Vec::new();
 
-    // Add local tools
     if let Some(ref registry) = context.local_tools_registry {
         let local_tools = format_tools_for_llm(registry);
         if !local_tools.is_empty() {
             if context.config.verbose {
-                let tool_names: Vec<String> = registry.list().iter().map(|t| t.name.clone()).collect();
+                let tool_names: Vec<String> =
+                    registry.list().iter().map(|t| t.name.clone()).collect();
                 eprintln!(
                     "{}",
                     format!(
@@ -57,8 +140,6 @@ pub async fn run(context: OrchestratorContext, messages: &mut Vec<Message>) -> R
         Some(all_tools)
     };
 
-    // Use non-streaming when tools are available for proper tool handling
-    // OpenRouter's streaming API doesn't properly stream tool call arguments
     let use_streaming = tools.is_none();
 
     let request_body = RequestBody {
@@ -69,7 +150,6 @@ pub async fn run(context: OrchestratorContext, messages: &mut Vec<Message>) -> R
         tools: tools.clone(),
     };
 
-    // Debug: Print tools being sent
     if context.config.verbose && tools.is_some() {
         eprintln!(
             "{}",
@@ -79,13 +159,15 @@ pub async fn run(context: OrchestratorContext, messages: &mut Vec<Message>) -> R
 
     if context.config.verbose {
         eprintln!("{}", format!("[AI] Using model: {}", final_model).dimmed());
-    }
-
-    // Make API request
-    if context.config.verbose {
         eprintln!("{}", "[AI] Making API request...".dimmed());
     }
-    let response = make_api_request(&context.config.api_key, &context.config.api_endpoint, &request_body).await?;
+
+    let response = make_api_request(
+        &context.config.api_key,
+        &context.config.api_endpoint,
+        &request_body,
+    )
+    .await?;
 
     if context.config.verbose {
         eprintln!(
@@ -96,16 +178,17 @@ pub async fn run(context: OrchestratorContext, messages: &mut Vec<Message>) -> R
 
     if !response.status().is_success() {
         let status = response.status().as_u16();
-        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+        let error_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Unknown error".to_string());
         return Err(Cmd2AiError::ApiError {
             status,
             message: error_text,
         });
     }
 
-    // Process response based on whether we're streaming or not
     let assistant_response = if use_streaming {
-        // Streaming path - no tools available
         let streaming_result = process_streaming_response(
             response,
             context.config.stream_timeout,
@@ -113,10 +196,8 @@ pub async fn run(context: OrchestratorContext, messages: &mut Vec<Message>) -> R
             context.config.verbose,
         )
         .await?;
-
         streaming_result.content
     } else {
-        // Non-streaming path - handle tools properly
         let response_text = response.text().await?;
         if context.config.verbose {
             eprintln!(
@@ -125,17 +206,8 @@ pub async fn run(context: OrchestratorContext, messages: &mut Vec<Message>) -> R
             );
         }
 
-        // Parse the response
         let response_json: Value = serde_json::from_str(&response_text)?;
-
-        // Process the non-streaming response with tool handling
-        process_non_streaming_response(
-            &context,
-            response_json,
-            messages,
-            &final_model,
-        )
-        .await?
+        process_non_streaming_response(&context, response_json, messages, &final_model).await?
     };
 
     Ok(assistant_response)
@@ -211,7 +283,11 @@ async fn process_non_streaming_response(
                 };
 
                 if context.config.verbose {
-                    eprintln!("{}", "[AI] Making follow-up request with tool results (streaming enabled)...".dimmed());
+                    eprintln!(
+                        "{}",
+                        "[AI] Making follow-up request with tool results (streaming enabled)..."
+                            .dimmed()
+                    );
                 }
 
                 let followup_response = make_api_request(
@@ -223,7 +299,10 @@ async fn process_non_streaming_response(
 
                 if !followup_response.status().is_success() {
                     let status = followup_response.status().as_u16();
-                    let error_text = followup_response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+                    let error_text = followup_response
+                        .text()
+                        .await
+                        .unwrap_or_else(|_| "Unknown error".to_string());
                     return Err(Cmd2AiError::ApiError {
                         status,
                         message: error_text,
@@ -279,7 +358,10 @@ async fn execute_tool_calls(
         let function = tool_call.get("function");
 
         if id.is_none() {
-            eprintln!("{}", "Warning: Tool call missing 'id' field, skipping".yellow());
+            eprintln!(
+                "{}",
+                "Warning: Tool call missing 'id' field, skipping".yellow()
+            );
             // Generate a temporary ID for error reporting
             let temp_id = format!(
                 "error_{}",
@@ -301,7 +383,11 @@ async fn execute_tool_calls(
         if function.is_none() {
             eprintln!(
                 "{}",
-                format!("Warning: Tool call {} missing 'function' field, skipping", id).yellow()
+                format!(
+                    "Warning: Tool call {} missing 'function' field, skipping",
+                    id
+                )
+                .yellow()
             );
             tool_results.push(Message {
                 role: "tool".to_string(),
@@ -322,8 +408,11 @@ async fn execute_tool_calls(
         if name.is_none() {
             eprintln!(
                 "{}",
-                format!("Warning: Tool call {} missing 'function.name' field, skipping", id)
-                    .yellow()
+                format!(
+                    "Warning: Tool call {} missing 'function.name' field, skipping",
+                    id
+                )
+                .yellow()
             );
             tool_results.push(Message {
                 role: "tool".to_string(),
@@ -341,8 +430,11 @@ async fn execute_tool_calls(
         if arguments_str.is_none() {
             eprintln!(
                 "{}",
-                format!("Warning: Tool call {} missing 'function.arguments' field, skipping", id)
-                    .yellow()
+                format!(
+                    "Warning: Tool call {} missing 'function.arguments' field, skipping",
+                    id
+                )
+                .yellow()
             );
             tool_results.push(Message {
                 role: "tool".to_string(),
@@ -365,7 +457,11 @@ async fn execute_tool_calls(
             };
             eprintln!(
                 "{}",
-                format!("[tools] Selected tool: '{}' with args: {}", name, args_preview).dimmed()
+                format!(
+                    "[tools] Selected tool: '{}' with args: {}",
+                    name, args_preview
+                )
+                .dimmed()
             );
         }
 
@@ -415,7 +511,8 @@ async fn execute_tool_calls(
                     }
                 } else {
                     // Display tool not found error (local tools disabled) in a boxed format
-                    let error_text = format!("Error: Tool '{}' not found (local tools disabled)", name);
+                    let error_text =
+                        format!("Error: Tool '{}' not found (local tools disabled)", name);
                     display_tool_error(name, &error_text);
 
                     tool_results.push(Message {
@@ -428,8 +525,10 @@ async fn execute_tool_calls(
             }
             Err(err) => {
                 // Display argument parsing error in a boxed format
-                let error_text =
-                    format!("Error: failed to parse arguments for tool '{}' : {}", name, err);
+                let error_text = format!(
+                    "Error: failed to parse arguments for tool '{}' : {}",
+                    name, err
+                );
                 display_tool_error(name, &error_text);
 
                 tool_results.push(Message {
@@ -445,3 +544,220 @@ async fn execute_tool_calls(
     Ok(tool_results)
 }
 
+async fn run_code_mode(
+    context: OrchestratorContext,
+    messages: &mut Vec<Message>,
+) -> Result<String> {
+    if context.config.verbose {
+        eprintln!("{}", "[code_mode] Using code execution mode".dimmed());
+    } else {
+        println!("{}", "Using code execution mode".cyan());
+    }
+
+    let session = create_new_session();
+    let workspace = create_workspace(&session.session_id, &context.config.code_mode)?;
+
+    if context.config.verbose {
+        eprintln!(
+            "{}",
+            format!("[code_mode] Workspace: {}", workspace.display()).dimmed()
+        );
+    }
+
+    let bun_path = resolve_bun_path(&context.config.code_mode)?;
+
+    let tools_description = {
+        let registry_ref = context
+            .local_tools_registry
+            .as_ref()
+            .ok_or_else(|| Cmd2AiError::Other("No local tools registry available".to_string()))?;
+
+        let description = registry_ref
+            .list()
+            .iter()
+            .map(|t| format!("- `{}`: {}", t.name, t.description))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        generate_typescript_files(registry_ref, &workspace, context.config.verbose)?;
+        description
+    };
+
+    let mut request_messages = messages.clone();
+
+    let code_mode_instructions = format!(
+        r#"
+
+## Code Execution Mode
+
+You have access to local tools via a TypeScript filesystem API. Instead of making direct tool calls, write TypeScript code that imports and uses these tools.
+
+### Available Tools
+
+Tools are available in the `./servers/local/` directory. Import them like this:
+
+```typescript
+import * as local from './servers/local';
+
+// Example: reading a file
+const content = await local.readFile({{ path: 'example.txt' }});
+```
+
+### Tool Files
+
+The following tools are available:
+{tools}
+
+### Instructions
+
+1. Write a complete TypeScript program that accomplishes the user's request
+2. Import tools from `./servers/local` as needed
+3. Use standard TypeScript/JavaScript control flow (loops, conditionals, async/await)
+4. Log results using `console.log()` for the user to see
+5. Return your code in a fenced code block with language tag `typescript` or `ts`
+
+### Example
+
+```typescript
+import * as local from './servers/local';
+
+const content = await local.readFile({{ path: 'example.txt' }});
+console.log('File content:', content);
+```
+
+Write your TypeScript code now:
+"#,
+        tools = tools_description
+    );
+
+    if let Some(system_msg) = request_messages.iter_mut().find(|m| m.role == "system") {
+        if let Some(ref content) = system_msg.content {
+            system_msg.content = Some(format!("{}{}", content, code_mode_instructions));
+        } else {
+            system_msg.content = Some(code_mode_instructions.clone());
+        }
+    } else {
+        request_messages.insert(
+            0,
+            Message {
+                role: "system".to_string(),
+                content: Some(code_mode_instructions),
+                tool_calls: None,
+                tool_call_id: None,
+            },
+        );
+    }
+
+    let request_body = RequestBody {
+        model: context.config.model.clone(),
+        messages: request_messages.to_vec(),
+        stream: true,
+        reasoning: context.config.reasoning.clone(),
+        tools: None,
+    };
+
+    if context.config.verbose {
+        eprintln!(
+            "{}",
+            "[code_mode] Requesting TypeScript code from model...".dimmed()
+        );
+    }
+
+    let response = make_api_request(
+        &context.config.api_key,
+        &context.config.api_endpoint,
+        &request_body,
+    )
+    .await?;
+
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        let error_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Unknown error".to_string());
+        return Err(Cmd2AiError::ApiError {
+            status,
+            message: error_text,
+        });
+    }
+
+    let streaming_result = process_streaming_response(
+        response,
+        context.config.stream_timeout,
+        context.args.reasoning_exclude,
+        context.config.verbose,
+    )
+    .await?;
+
+    let typescript_code = extract_typescript_code(&streaming_result.content)?;
+
+    if context.config.verbose {
+        eprintln!(
+            "{}",
+            format!(
+                "[code_mode] Extracted {} bytes of TypeScript code",
+                typescript_code.len()
+            )
+            .dimmed()
+        );
+    }
+
+    let executor = CodeExecutor::new(
+        bun_path,
+        workspace.clone(),
+        &context.config.code_mode,
+        context.config.verbose,
+    );
+
+    executor.write_code(&typescript_code)?;
+
+    match executor.execute().await {
+        Ok(result) => {
+            if result.exit_code != 0 {
+                eprintln!(
+                    "{}",
+                    format!("Code execution failed with exit code {}", result.exit_code).red()
+                );
+                if !result.stderr.is_empty() {
+                    eprintln!("{}", format!("Stderr: {}", result.stderr).red());
+                }
+                return run_classic_tool_calling(context, messages).await;
+            }
+
+            if !result.stdout.is_empty() {
+                display_content(&result.stdout);
+            }
+
+            Ok(result.stdout)
+        }
+        Err(e) => {
+            eprintln!("{}", format!("Code execution error: {}", e).red());
+            run_classic_tool_calling(context, messages).await
+        }
+    }
+}
+
+fn extract_typescript_code(response: &str) -> Result<String> {
+    let typed = Regex::new(r"(?s)```(?:typescript|ts)\n(.*?)```").map_err(|e| {
+        Cmd2AiError::Other(format!(
+            "Failed to compile regex for code extraction: {}",
+            e
+        ))
+    })?;
+    if let Some(caps) = typed.captures(response) {
+        return Ok(caps.get(1).unwrap().as_str().to_string());
+    }
+
+    let any = Regex::new(r"(?s)```\w*\n(.*?)```").map_err(|e| {
+        Cmd2AiError::Other(format!(
+            "Failed to compile regex for code extraction: {}",
+            e
+        ))
+    })?;
+    if let Some(caps) = any.captures(response) {
+        return Ok(caps.get(1).unwrap().as_str().to_string());
+    }
+
+    Ok(response.to_string())
+}

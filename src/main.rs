@@ -1,5 +1,6 @@
 mod api;
 mod cli;
+mod code_exec;
 mod config;
 mod error;
 mod local_tools;
@@ -14,14 +15,14 @@ use std::process;
 
 use cli::Args;
 use config::Config;
-use local_tools::LocalSettings;
-use local_tools::LocalToolRegistry;
+use local_tools::{call_local_tool, LocalSettings, LocalToolRegistry};
 use models::Message;
 use orchestrator::{run, OrchestratorContext};
 use session::{
     clear_all_sessions, create_new_session, find_recent_session, save_session,
     trim_conversation_history,
 };
+use std::io::{self, Read};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -67,6 +68,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 process::exit(1);
             }
         }
+    }
+
+    // Handle internal tool execution mode (used by code mode TypeScript client)
+    if let Some(tool_name) = &args.tool_exec {
+        return handle_tool_exec(tool_name).await;
     }
 
     if args.command.is_empty() {
@@ -195,14 +201,60 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Err(e) = save_session(&session) {
             // Note: config is moved into context, so we can't access verbose here
             // This is acceptable as session save errors are non-critical
-                eprintln!(
-                    "{}",
-                    format!("[AI] Warning: Failed to save session: {}", e).dimmed()
-                );
+            eprintln!(
+                "{}",
+                format!("[AI] Warning: Failed to save session: {}", e).dimmed()
+            );
         }
     }
 
     Ok(())
+}
+
+async fn handle_tool_exec(tool_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let args = Args::parse();
+    let config = Config::from_env_and_args(&args).map_err(|e| {
+        eprintln!("{}", format!("Error loading config: {}", e).red());
+        std::io::Error::new(std::io::ErrorKind::Other, "config error")
+    })?;
+
+    let settings = LocalSettings::from_config(&config.local_tools_config, config.verbose);
+    let registry = LocalToolRegistry::new(&config.local_tools_config, settings);
+
+    if registry.get(tool_name).is_none() {
+        let error_json = serde_json::json!({
+            "error": format!("Tool '{}' not found", tool_name)
+        });
+        println!("{}", serde_json::to_string(&error_json)?);
+        process::exit(1);
+    }
+
+    let mut input = String::new();
+    io::stdin().read_to_string(&mut input)?;
+
+    let arguments: serde_json::Value = match serde_json::from_str(&input) {
+        Ok(args) => args,
+        Err(e) => {
+            let error_json = serde_json::json!({
+                "error": format!("Failed to parse JSON input: {}", e)
+            });
+            println!("{}", serde_json::to_string(&error_json)?);
+            process::exit(1);
+        }
+    };
+
+    match call_local_tool(&registry, tool_name, &arguments).await {
+        Ok(result) => {
+            let output_json = serde_json::json!({ "result": result });
+            println!("{}", serde_json::to_string(&output_json)?);
+            Ok(())
+        }
+        Err(e) => {
+            let error_json = serde_json::json!({ "error": e });
+            println!("{}", serde_json::to_string(&error_json)?);
+            process::exit(1);
+        }
+    }
 }
 
 fn print_usage() {

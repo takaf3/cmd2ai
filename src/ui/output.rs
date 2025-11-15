@@ -41,7 +41,11 @@ pub fn display_reasoning(reasoning: &str) {
 
     // Use CodeBuffer to render reasoning block with dynamic width
     // Avoid double newline if content already ends with one
-    let sep = if display_reasoning.ends_with('\n') { "" } else { "\n" };
+    let sep = if display_reasoning.ends_with('\n') {
+        ""
+    } else {
+        "\n"
+    };
     let reasoning_block = format!("```REASONING\n{}{}\n```", display_reasoning, sep);
     let mut reasoning_code_buffer = CodeBuffer::new();
     let formatted = reasoning_code_buffer.append(&reasoning_block);
@@ -69,4 +73,3 @@ pub fn display_content(content: &str) {
     }
     println!();
 }
-

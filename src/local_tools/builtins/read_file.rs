@@ -29,9 +29,13 @@ pub fn handle_read_file(args: &Value, settings: &LocalSettings) -> Result<String
     if settings.verbose {
         eprintln!(
             "{}",
-            format!("[tools] Resolved path: {} -> {}", path_str, resolved_path.display())
-                .as_str()
-                .dimmed()
+            format!(
+                "[tools] Resolved path: {} -> {}",
+                path_str,
+                resolved_path.display()
+            )
+            .as_str()
+            .dimmed()
         );
     }
 
@@ -59,13 +63,16 @@ pub fn handle_read_file(args: &Value, settings: &LocalSettings) -> Result<String
     if settings.verbose {
         eprintln!(
             "{}",
-            format!("[tools] Reading file: {} ({} bytes)", resolved_path.display(), metadata.len())
-                .as_str()
-                .dimmed()
+            format!(
+                "[tools] Reading file: {} ({} bytes)",
+                resolved_path.display(),
+                metadata.len()
+            )
+            .as_str()
+            .dimmed()
         );
     }
 
     // Read file (UTF-8 only)
     fs::read_to_string(&resolved_path).map_err(|e| format!("Failed to read file: {}", e))
 }
-

@@ -26,8 +26,8 @@ pub async fn call_local_tool(
 ) -> Result<String, String> {
     let settings = registry.settings();
     if settings.verbose {
-        let args_str = serde_json::to_string(arguments)
-            .unwrap_or_else(|_| "<invalid json>".to_string());
+        let args_str =
+            serde_json::to_string(arguments).unwrap_or_else(|_| "<invalid json>".to_string());
         let truncated = if args_str.len() > 200 {
             format!("{}...", &args_str[..200])
         } else {
@@ -35,7 +35,11 @@ pub async fn call_local_tool(
         };
         eprintln!(
             "{}",
-            format!("[tools] Calling tool '{}' with args: {}", tool_name, truncated).dimmed()
+            format!(
+                "[tools] Calling tool '{}' with args: {}",
+                tool_name, truncated
+            )
+            .dimmed()
         );
     }
 

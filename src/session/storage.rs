@@ -11,4 +11,3 @@ pub trait SessionStore: Send + Sync {
     /// Clear all sessions
     fn clear_all_sessions(&self) -> Result<(), Box<dyn std::error::Error>>;
 }
-

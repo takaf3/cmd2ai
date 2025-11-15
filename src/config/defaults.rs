@@ -45,4 +45,3 @@ pub fn default_allow_absolute() -> bool {
 pub fn is_default_allow_absolute(value: &bool) -> bool {
     *value == default_allow_absolute()
 }
-

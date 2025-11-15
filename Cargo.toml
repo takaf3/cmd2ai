@@ -29,6 +29,7 @@ anyhow = "1.0"
 regex = "1.10"
 jsonschema = "0.19"
 terminal_size = "0.3"
+which = "6.0"
 
 [dev-dependencies]
 tempfile = "3.10"

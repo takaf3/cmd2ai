@@ -62,4 +62,3 @@ pub fn save_session(session: &crate::models::Session) -> Result<(), Box<dyn std:
 pub fn clear_all_sessions() -> Result<(), Box<dyn std::error::Error>> {
     FilesystemSessionStore::new().clear_all_sessions()
 }
-

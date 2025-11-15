@@ -57,6 +57,19 @@ pub struct Args {
     pub no_tools: bool,
 
     #[arg(
+        long = "no-code-mode",
+        help = "Disable code execution mode (use direct tool calls instead)"
+    )]
+    pub no_code_mode: bool,
+
+    #[arg(
+        long = "tool-exec",
+        help = "Internal: Execute a single tool (for code mode)",
+        hide = true
+    )]
+    pub tool_exec: Option<String>,
+
+    #[arg(
         long = "config-init",
         help = "Initialize a config file with example local tools"
     )]

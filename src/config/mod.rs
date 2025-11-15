@@ -1,4 +1,5 @@
 mod api;
+mod code_mode;
 mod defaults;
 mod reasoning;
 mod tools;
@@ -13,6 +14,7 @@ use std::fs;
 use std::path::PathBuf;
 
 pub use api::ApiConfig;
+pub use code_mode::CodeModeConfig;
 pub use reasoning::ReasoningConfig;
 pub use tools::{LocalToolConfig, LocalToolsConfig, TemplateValidation, ToolsConfig};
 pub use validation::{expand_env_var_in_string, expand_env_vars};
@@ -56,6 +58,7 @@ pub struct Config {
     pub reasoning: Option<Reasoning>,
     pub local_tools_config: LocalToolsConfig,
     pub tools_enabled: bool,
+    pub code_mode: CodeModeConfig,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -72,6 +75,8 @@ pub struct JsonConfig {
     pub tools: ToolsConfig,
     #[serde(default)]
     pub local_tools: LocalToolsConfig,
+    #[serde(default)]
+    pub code_mode: CodeModeConfig,
 }
 
 impl Config {
@@ -147,6 +152,9 @@ impl Config {
         // Build reasoning configuration from CLI args, env vars, and JSON config
         let reasoning = Self::build_reasoning_config(args, &json_config.reasoning);
 
+        // Build code mode configuration
+        let code_mode = Self::build_code_mode_config(args, &json_config.code_mode);
+
         Ok(Config {
             api_key,
             api_endpoint,
@@ -157,6 +165,7 @@ impl Config {
             reasoning,
             local_tools_config,
             tools_enabled,
+            code_mode,
         })
     }
 
@@ -235,6 +244,45 @@ impl Config {
     pub fn get_current_date() -> String {
         chrono::Local::now().format("%A, %B %d, %Y").to_string()
     }
+
+    fn build_code_mode_config(args: &Args, json_code_mode: &CodeModeConfig) -> CodeModeConfig {
+        let env_code_mode_enabled =
+            env::var("AI_CODE_MODE_ENABLED")
+                .ok()
+                .and_then(|v| match v.to_lowercase().as_str() {
+                    "true" | "1" | "yes" => Some(true),
+                    "false" | "0" | "no" => Some(false),
+                    _ => None,
+                });
+
+        let env_workspace_dir = env::var("AI_CODE_MODE_WORKSPACE_DIR").ok();
+        let env_bun_path = env::var("AI_CODE_MODE_BUN_PATH").ok();
+        let env_timeout = env::var("AI_CODE_MODE_TIMEOUT")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok());
+        let env_max_output = env::var("AI_CODE_MODE_MAX_OUTPUT_BYTES")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok());
+
+        let final_enabled = if args.no_code_mode {
+            false
+        } else {
+            env_code_mode_enabled.unwrap_or(json_code_mode.enabled)
+        };
+
+        let final_workspace_dir = env_workspace_dir.or(json_code_mode.workspace_dir.clone());
+        let final_bun_path = env_bun_path.or(json_code_mode.bun_path.clone());
+        let final_timeout = env_timeout.or(json_code_mode.timeout_secs);
+        let final_max_output = env_max_output.or(json_code_mode.max_output_bytes);
+
+        CodeModeConfig {
+            enabled: final_enabled,
+            workspace_dir: final_workspace_dir,
+            bun_path: final_bun_path,
+            timeout_secs: final_timeout,
+            max_output_bytes: final_max_output,
+        }
+    }
 }
 
 impl JsonConfig {
@@ -288,4 +336,3 @@ impl JsonConfig {
         paths
     }
 }
-

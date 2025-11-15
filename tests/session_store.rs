@@ -1,6 +1,6 @@
+use chrono::Local;
 use cmd2ai::models::{Message, Session};
 use cmd2ai::session::{FilesystemSessionStore, SessionStore};
-use chrono::Local;
 use std::fs;
 use tempfile::TempDir;
 
@@ -102,4 +102,3 @@ fn test_find_most_recent_session() {
     let found = store.find_recent_session().unwrap();
     assert_eq!(found.session_id, "new");
 }
-

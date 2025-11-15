@@ -1,4 +1,6 @@
-use crate::config::{expand_env_var_in_string, expand_env_vars, LocalToolConfig, TemplateValidation};
+use crate::config::{
+    expand_env_var_in_string, expand_env_vars, LocalToolConfig, TemplateValidation,
+};
 use colored::Colorize;
 use regex::Regex;
 use serde_json::Value;
@@ -147,17 +149,14 @@ async fn execute_script(
             )
             .dimmed()
         );
-        let args_json = serde_json::to_string(arguments)
-            .unwrap_or_else(|_| "<invalid>".to_string());
+        let args_json =
+            serde_json::to_string(arguments).unwrap_or_else(|_| "<invalid>".to_string());
         let truncated = if args_json.len() > 100 {
             format!("{}...", &args_json[..100])
         } else {
             args_json
         };
-        eprintln!(
-            "{}",
-            format!("[tools] stdin: {}", truncated).dimmed()
-        );
+        eprintln!("{}", format!("[tools] stdin: {}", truncated).dimmed());
     }
 
     // Prepare command
@@ -298,12 +297,7 @@ async fn execute_command(
         .iter()
         .map(|arg| expand_env_var_in_string(arg))
         .collect();
-    let templated_args = template_args(
-        &env_expanded_args,
-        arguments,
-        tool_config,
-        settings,
-    )?;
+    let templated_args = template_args(&env_expanded_args, arguments, tool_config, settings)?;
 
     // Log pre-execution info
     if settings.verbose {
@@ -336,17 +330,14 @@ async fn execute_command(
             .dimmed()
         );
         if tool_config.stdin_json {
-            let args_json = serde_json::to_string(arguments)
-                .unwrap_or_else(|_| "<invalid>".to_string());
+            let args_json =
+                serde_json::to_string(arguments).unwrap_or_else(|_| "<invalid>".to_string());
             let truncated = if args_json.len() > 100 {
                 format!("{}...", &args_json[..100])
             } else {
                 args_json
             };
-            eprintln!(
-                "{}",
-                format!("[tools] stdin: {}", truncated).dimmed()
-            );
+            eprintln!("{}", format!("[tools] stdin: {}", truncated).dimmed());
         }
     }
 
@@ -473,19 +464,19 @@ fn template_args(
     for (arg_idx, arg) in args.iter().enumerate() {
         let mut result = arg.clone();
         let mut had_placeholder = false;
-        
+
         // Collect all matches with their byte positions first
         // This prevents cascading replacements where a replacement value
         // contains a placeholder pattern that gets replaced again
         let mut replacements: Vec<(usize, usize, String)> = Vec::new();
-        
+
         for cap in re.captures_iter(arg) {
             had_placeholder = true;
             let key = &cap[1];
             let placeholder = &cap[0];
             let start = cap.get(0).unwrap().start();
             let end = cap.get(0).unwrap().end();
-            
+
             // Get value from arguments JSON
             if let Some(value) = arguments.get(key) {
                 let value_str = match value {
@@ -495,10 +486,10 @@ fn template_args(
                     Value::Null => String::new(),
                     _ => serde_json::to_string(value).unwrap_or_else(|_| placeholder.to_string()),
                 };
-                
+
                 // Determine validation policy for this key
                 let validation = get_validation_policy(key, tool_config);
-                
+
                 // Validate and transform the value based on policy
                 let validated_value = validate_and_transform_value(
                     key,
@@ -507,22 +498,22 @@ fn template_args(
                     tool_config,
                     settings,
                 )?;
-                
+
                 if validation.kind == "path" {
                     has_path_placeholders = true;
                 }
-                
+
                 replacements.push((start, end, validated_value));
             }
             // If key not found, leave placeholder as-is (validation should catch missing required fields)
         }
-        
+
         // Replace from end to start to preserve positions
         replacements.sort_by(|a, b| b.0.cmp(&a.0));
         for (start, end, replacement) in replacements {
             result.replace_range(start..end, &replacement);
         }
-        
+
         templated_args.push(result);
         if had_placeholder {
             args_with_placeholders.push(arg_idx);
@@ -564,7 +555,7 @@ fn get_validation_policy(key: &str, tool_config: &LocalToolConfig) -> TemplateVa
             return validation.clone();
         }
     }
-    
+
     // Heuristic: treat keys matching path pattern as paths
     let path_pattern = Regex::new(r"(?i)^(.*_)?path(s)?$").unwrap();
     if path_pattern.is_match(key) {
@@ -619,7 +610,7 @@ fn validate_and_transform_value(
                 // Validate and canonicalize the path
                 let canonical_path = canonicalize_within_base_dir(value, &settings.base_dir)
                     .map_err(|e| format!("Invalid path argument '{}': {}", key, e))?;
-                
+
                 Ok(canonical_path)
             } else {
                 // Path restriction disabled - just return as-is (not recommended)
@@ -663,7 +654,6 @@ fn validate_and_transform_value(
         }
     }
 }
-
 
 /// Get script file extension based on interpreter
 fn get_script_extension(interpreter: &str) -> &str {

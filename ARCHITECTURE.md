@@ -26,6 +26,11 @@ src/
 │
 ├── config.rs             # Configuration management
 │
+├── code_exec/            # Code execution mode (bun + TS orchestration)
+│   ├── mod.rs
+│   ├── executor.rs       # Bun process management
+│   └── generator.rs      # TypeScript client/wrapper generation
+│
 ├── error.rs              # Unified error types
 │
 ├── models.rs             # Data models (Message, Session, Reasoning, ToolCall)
@@ -59,11 +64,12 @@ src/
    - Call orchestrator
 
 2. **Orchestration** (`orchestrator.rs`)
-   - Determine streaming vs non-streaming mode
-   - Collect and format tools
-   - Make API request
-   - Process response (streaming or non-streaming)
-   - Handle tool execution loops
+   - Decide between code execution mode and classic direct tool calling
+   - Apply a lightweight heuristic (keywords + prompt length) to follow Anthropic’s progressive-disclosure guidance—simple prompts stay classic, file/data workflows flip to code mode
+   - Code mode: generate TS wrappers, request TypeScript from the model, execute via bun
+   - Classic mode: collect and format tools for direct function calling
+   - Make API request, process streaming/non-streaming responses
+   - Handle tool execution loops and fallbacks
    - Return final response
 
 3. **API Layer** (`api/`)
@@ -94,6 +100,16 @@ src/
 
 - **Streaming**: Used when no tools are available. Provides real-time output.
 - **Non-Streaming**: Used when tools are available. Required because OpenRouter's streaming API doesn't properly stream tool call arguments.
+
+### Code Execution Mode
+
+- Enabled by default when local tools are available and `code_mode.enabled = true`
+- Generates a filesystem of TypeScript wrapper files plus a shared `client.ts`
+- Sends condensed instructions to the model and requests a TypeScript program
+- Executes the generated code via bun with configurable timeouts/output limits
+- Falls back to classic tool calling automatically on any compilation/runtime error
+- Heuristic gating keeps this mode reserved for prompts that mention files/directories/data workflows (per Anthropic’s progressive disclosure); everything else remains in classic mode
+- Users can opt out via `--no-code-mode` or config settings
 
 ### Tool Execution Loop
 
