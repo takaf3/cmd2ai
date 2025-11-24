@@ -7,6 +7,7 @@ A fast command-line tool that pipes your terminal commands to AI models via the 
 - ✅ Streaming AI responses using Server-Sent Events (SSE)
 - ✅ Syntax highlighting for code blocks
 - ✅ Conversation memory with automatic continuation
+- ✅ Code execution mode using TypeScript + bun for complex multi-tool workflows
 - ✅ Support for custom models and system prompts
 - ✅ Reasoning token support for enhanced AI model decision making
 - ✅ Local tool integration for extended AI capabilities
@@ -17,6 +18,7 @@ A fast command-line tool that pipes your terminal commands to AI models via the 
 
 - Rust 1.70 or higher
 - An OpenRouter API key
+- [bun](https://bun.sh) (required for code execution mode; optional if you only use classic tool calling)
 
 ## Installation
 
@@ -235,6 +237,14 @@ local_tools:
       enabled: true
     - name: list_dir
       enabled: true
+
+# Code Execution Mode Configuration
+code_mode:
+  enabled: true                          # Enable code execution mode (default: true)
+  # workspace_dir: ~/.cache/cmd2ai/code_mode  # Workspace directory for generated code (optional)
+  # bun_path: /usr/local/bin/bun               # Path to bun executable (optional)
+  # timeout_secs: 60                           # Execution timeout in seconds
+  # max_output_bytes: 10485760                 # Max stdout/stderr bytes collected
 ```
 
 #### Priority Order
@@ -337,6 +347,11 @@ Command-line arguments always take precedence over environment variables, allowi
 - `AI_REASONING_MAX_TOKENS` - Maximum tokens for reasoning
 - `AI_REASONING_EXCLUDE` - Use reasoning but exclude from output ("true", "1", or "yes")
 - `AI_TOOLS_ENABLED` - Enable/disable all tools ("true", "1", or "yes")
+- `AI_CODE_MODE_ENABLED` - Enable/disable code execution mode ("true"/"false")
+- `AI_CODE_MODE_BUN_PATH` - Custom path to bun executable
+- `AI_CODE_MODE_WORKSPACE_DIR` - Custom workspace directory for code execution
+- `AI_CODE_MODE_TIMEOUT` - Code execution timeout in seconds
+- `AI_CODE_MODE_MAX_OUTPUT_BYTES` - Maximum output size for stdout/stderr in bytes
 
 **Note:** All settings except the API key can be configured in YAML files. Environment variables override YAML config values, which is useful for temporary changes or debugging. The system also supports JSON files for backward compatibility.
 
@@ -351,6 +366,7 @@ Command-line arguments always take precedence over environment variables, allowi
 - `--clear` - Clear all conversation history
 - `--api-endpoint` - Custom API base URL (e.g., http://localhost:11434/v1)
 - `--no-tools` - Disable all tools for this query
+- `--no-code-mode` - Disable code execution mode (force classic direct tool calling)
 - `--config-init` - Initialize a config file with example local tools
 - `--reasoning-effort` - Set reasoning effort level (high, medium, low)
 - `--reasoning-max-tokens` - Set maximum tokens for reasoning
