@@ -1,15 +1,15 @@
 #!/usr/bin/env zsh
 
-# ZSH widget to intercept commands starting with capital letters
+# ZSH widget to intercept commands starting with capital letters or Japanese characters
 # and pass them to the AI tool (MCP tools are now enabled by default)
 
-# Function to check if command starts with capital letter and process it
+# Function to check if command starts with capital letter or Japanese character and process it
 function _ai_capital_interceptor() {
     local buffer="$BUFFER"
     
-    # Check if buffer starts with a capital letter
+    # Check if buffer starts with a capital letter or Japanese character (Hiragana/Katakana/Kanji)
     # but exclude environment variable assignments (VAR=value command)
-    if [[ "$buffer" =~ ^[A-Z] && ! "$buffer" =~ ^[^[:space:]]+= ]]; then
+    if [[ ( "$buffer" =~ ^[A-Z] || "$buffer" =~ ^[ぁ-んァ-ン一-龯] ) && ! "$buffer" =~ ^[^[:space:]]+= ]]; then
         # Build the ai command (tools are now enabled by default)
         local cmd="ai \"${buffer}\""
         
